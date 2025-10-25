@@ -1,5 +1,6 @@
 <template>
-  <div>
+  <div class="flex min-h-screen flex-col bg-slate-950 text-slate-200">
+    
     <header class="bg-slate-900 bg-opacity-50 backdrop-blur-md sticky top-0 z-50 border-b border-slate-800">
       <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
         <div class="text-2xl font-bold">
@@ -18,7 +19,7 @@
       </nav>
     </header>
 
-    <main>
+    <main class="flex-grow">
       <slot />
     </main>
 
@@ -31,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-// Ini adalah <head> global yang akan berlaku di semua halaman
+// Bagian script ini sudah SEMPURNA. Tidak perlu diubah.
 useHead({
   // title akan di-override oleh halaman individual jika diset
   titleTemplate: (titleChunk) => {
@@ -57,7 +58,7 @@ useHead({
 </script>
 
 <style>
-/* Anda bisa membiarkan style global di main.css. 
-  Style di sini hanya akan berlaku untuk layout ini.
+/* Style global sebaiknya ditaruh di file terpisah (mis: assets/css/main.css) 
+   dan diimpor di nuxt.config.ts, tapi membiarkannya kosong di sini juga tidak masalah.
 */
 </style>
