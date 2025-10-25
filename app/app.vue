@@ -1,15 +1,5 @@
 <template>
-  <div class="antialiased">
-    <NuxtPage />
-  </div>
+  <h1 class="text-3xl font-bold text-blue-600 underline">
+    Hello world!
+  </h1>
 </template>
-
-<script setup>
-// Tidak perlu apa-apa di sini
-</script>
-
-<style>
-/* Kosongkan style di sini. 
-  Kita akan memuat CSS global melalui nuxt.config.ts
-*/
-</style>
