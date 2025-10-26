@@ -71,11 +71,12 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-// Composable Nuxt lain seperti definePageMeta, useHead, useRuntimeConfig,
-// useSupabaseClient, serverSupabaseClient, useAsyncData, useRequestEvent, serverSupabaseUser, createError
-// seharusnya di-auto-import oleh Nuxt 3.
+// PERBAIKAN: Import composable server secara eksplisit
+import { useRequestEvent, useRuntimeConfig, createError } from '#app'; // Import dari Nuxt
+import { serverSupabaseClient, serverSupabaseUser } from '#supabase/server'; // Import server-specific dari modul Supabase
+// Composable client-side (useSupabaseClient, useAsyncData, definePageMeta, useHead) seharusnya tetap auto-imported
 
-// Tipe DetailedUser
+// Tipe DetailedUser (tetap sama)
 interface DetailedUser {
     id: string;
     email?: string;
@@ -112,31 +113,27 @@ const searchQuery = ref('');
 // ----------------------------------------------------
 const { data: users, pending, error } = await useAsyncData<DetailedUser[]>('adminUsers', async () => {
     // Kode di dalam factory useAsyncData ini akan berjalan di server
-    const event = useRequestEvent(); // Dapatkan event request (hanya tersedia di server)
+    const event = useRequestEvent();
     if (!event) {
-        // Handle case where event might not be available (e.g., during client-side navigation if not handled properly)
-        // Although with `await useAsyncData` without `lazy: true`, this should typically run server-side first.
-        console.error("useRequestEvent returned undefined. Fetching cannot proceed server-side without event context.");
+        console.error("useRequestEvent returned undefined. Cannot run server-side logic.");
         throw createError({ statusCode: 500, statusMessage: 'Server context not available.' });
     }
-    const config = useRuntimeConfig(event); // Akses runtime config (termasuk service key)
+    const config = useRuntimeConfig(event); // Gunakan event di sini
     const adminEmail = config.public.adminEmail;
 
-    // 1. Verifikasi pengguna saat ini adalah admin (keamanan tambahan)
+    // 1. Verifikasi pengguna saat ini adalah admin
     const currentUser = await serverSupabaseUser(event);
     if (!currentUser || currentUser.email !== adminEmail) {
-        // Jika bukan admin, lempar error (middleware seharusnya sudah menangani ini, tapi lebih aman)
         throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
     }
 
     // 2. Buat admin client Supabase MENGGUNAKAN SERVICE KEY
-    // Penting: Gunakan service key dari runtime config (BUKAN process.env langsung di sini)
     const adminClient = await serverSupabaseClient(event, { supabaseKey: config.supabaseServiceKey });
     if (!adminClient) {
         throw createError({ statusCode: 500, statusMessage: 'Supabase admin client not initialized.' });
     }
 
-    // 3. Ambil daftar pengguna menggunakan Admin API client
+    // 3. Ambil daftar pengguna
     const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({
         // page: 1, perPage: 1000 // Sesuaikan paginasi jika perlu
     });
@@ -147,12 +144,12 @@ const { data: users, pending, error } = await useAsyncData<DetailedUser[]>('admi
     }
     if (!userData || !userData.users) return [];
 
-    // --- (Logika Join Profile & Organisasi tetap sama, tapi menggunakan adminClient) ---
+    // --- Logika Join Profile & Organisasi ---
     const userIds = userData.users.map(u => u.id);
     if (userIds.length === 0) return [];
 
     const { data: profiles, error: profileError } = await adminClient
-        .from('profiles') // Ganti 'profiles' jika perlu
+        .from('profiles')
         .select('user_id, full_name, current_organization_id')
         .in('user_id', userIds);
 
@@ -163,7 +160,7 @@ const { data: users, pending, error } = await useAsyncData<DetailedUser[]>('admi
 
     if (organizationIds.length > 0) {
         const { data: organizations, error: orgError } = await adminClient
-            .from('organizations') // Ganti 'organizations' jika perlu
+            .from('organizations')
             .select('id, name')
             .in('id', organizationIds);
 
