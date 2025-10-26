@@ -17,13 +17,22 @@
       <p class="mt-2 text-slate-400">Memuat data pengguna...</p>
     </div>
 
-    <div v-else-if="error" class="error-panel card p-6 rounded-lg text-center bg-red-900/30 border border-red-700">
+    <div v-else-if="errorResponse" class="error-panel card p-6 rounded-lg mb-6 bg-red-900/30 border border-red-700">
       <h2 class="text-xl font-bold text-red-400 mb-2">Gagal Memuat Data Pengguna</h2>
-      <p class="text-red-300">Terjadi kesalahan saat mengambil data. Silakan coba lagi.</p>
-      <p v-if="error" class="text-sm text-red-500 mt-2">Detail Error: {{ error.data?.message || error.statusMessage || error.message || error.toString() }}</p>
+      <p class="text-red-300">{{ errorResponse.error?.statusMessage || 'Terjadi kesalahan.' }} (Code: {{ errorResponse.error?.statusCode || 'N/A' }})</p>
+
+      <details class="mt-4 text-left text-xs text-red-200 bg-red-800/30 p-3 rounded">
+        <summary class="cursor-pointer font-semibold">Debug Info</summary>
+        <pre class="mt-2 whitespace-pre-wrap break-words">{{ JSON.stringify(errorResponse.debug, null, 2) }}</pre>
+      </details>
     </div>
 
     <div v-else class="card rounded-lg overflow-hidden">
+      <details v-if="debugData" class="m-4 text-left text-xs text-green-200 bg-green-800/30 p-3 rounded">
+        <summary class="cursor-pointer font-semibold">Debug Info (Sukses)</summary>
+        <pre class="mt-2 whitespace-pre-wrap break-words">{{ JSON.stringify(debugData, null, 2) }}</pre>
+      </details>
+
       <div class="overflow-x-auto">
         <table class="w-full text-left text-sm whitespace-nowrap">
           <thead class="bg-slate-900/50 text-slate-400">
@@ -67,7 +76,7 @@
       </div>
     </div>
 
-     <div v-if="userToSuspend" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-70">
+    <div v-if="userToSuspend" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-70">
        <div class="bg-slate-800 p-6 rounded-xl shadow-2xl z-50 max-w-sm w-full border border-slate-700">
             <h3 class="text-xl font-bold text-red-400 mb-4 flex items-center">
                 <i class="fas fa-triangle-exclamation mr-3"></i> Konfirmasi Suspend
@@ -94,9 +103,8 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-// Auto-imports should handle useAsyncData, definePageMeta, useHead, useNuxtApp, $fetch
 
-// Tipe DetailedUser (tetap sama)
+// Definisikan tipe DetailedUser dan DebugInfo (bisa diimpor jika diletakkan di file terpisah)
 interface DetailedUser {
     id: string;
     email?: string;
@@ -111,7 +119,32 @@ interface DetailedUser {
     } | null;
 }
 
-// Meta Halaman & Middleware (tetap sama)
+interface DebugInfo {
+    invoked: boolean;
+    expectedAdminEmail?: string | null;
+    serviceKeyPresent?: boolean;
+    serverUserEmail?: string | null;
+    accessGranted?: boolean;
+    errorMessage?: string;
+    step?: string;
+}
+
+// Definisikan tipe untuk respons sukses dan error
+interface ApiResponse {
+    users: DetailedUser[];
+    debug: DebugInfo;
+}
+
+interface ApiErrorResponse {
+    error: {
+      statusCode: number;
+      statusMessage: string;
+      data?: any;
+    };
+    debug: DebugInfo;
+}
+
+// Meta Halaman & Middleware
 definePageMeta({
   layout: 'admin',
   middleware: 'admin-auth'
@@ -121,24 +154,62 @@ useHead({
   title: 'Manajemen Pengguna',
 });
 
-// State (tetap sama)
+// State
 const searchQuery = ref('');
 const userToSuspend = ref<DetailedUser | null>(null);
 const suspending = ref(false);
 const suspendError = ref<string | null>(null);
 
 // ----------------------------------------------------
-// Data Fetching Menggunakan useAsyncData - Fetching from API route
+// Data Fetching Menggunakan useAsyncData
+// Tipe data sekarang adalah ApiResponse | ApiErrorResponse
 // ----------------------------------------------------
-const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser[]>(
+const { data: response, pending, error: fetchError, refresh } = await useAsyncData<ApiResponse | ApiErrorResponse>(
   'adminUsers',
-  () => $fetch('/api/admin/users'), // Fetch dari API route baru
-  { default: () => [] } // Jaga nilai default
+  () => $fetch<ApiResponse | ApiErrorResponse>('/api/admin/users'), // Tentukan tipe fetch
 );
 
-// Filtering (Client-Side) (tetap sama)
+// Computed properties untuk memisahkan data sukses dan error
+const usersData = computed(() => {
+  // Cek jika response ada dan TIDAK memiliki properti 'error'
+  if (response.value && !('error' in response.value)) {
+    return (response.value as ApiResponse).users;
+  }
+  return []; // Default ke array kosong jika error atau data belum ada
+});
+
+const errorResponse = computed(() => {
+  // Jika fetchError (dari useAsyncData) ada, gunakan itu
+  if (fetchError.value) {
+     console.error("fetchError from useAsyncData:", fetchError.value);
+     // Buat struktur error palsu jika perlu, atau coba ekstrak dari fetchError.value.data
+     const statusCode = fetchError.value.statusCode || 500;
+     const statusMessage = fetchError.value.statusMessage || fetchError.value.message || 'Error fetching data';
+     const debugFallback = { errorMessage: statusMessage, step: 'useAsyncData fetch failed' };
+     return {
+         error: { statusCode, statusMessage, data: fetchError.value.data },
+         debug: (fetchError.value.data as any)?.debug || debugFallback // Coba ambil debug dari data error
+     } as ApiErrorResponse;
+  }
+  // Jika response dari API memiliki properti 'error'
+  if (response.value && 'error' in response.value) {
+    return response.value as ApiErrorResponse;
+  }
+  return null; // Tidak ada error
+});
+
+const debugData = computed(() => {
+    if (response.value && !('error' in response.value)) {
+        return (response.value as ApiResponse).debug;
+    }
+    // Debug info juga ada di errorResponse
+    return errorResponse.value?.debug || null;
+});
+
+
+// Filtering (Client-Side) - Menggunakan usersData
 const filteredUsers = computed((): DetailedUser[] => {
-    const userList = Array.isArray(users.value) ? users.value : [];
+    const userList = usersData.value; // Gunakan computed property usersData
     if (!searchQuery.value) return userList;
     const lowerSearch = searchQuery.value.toLowerCase();
     return userList.filter(user =>
@@ -147,10 +218,9 @@ const filteredUsers = computed((): DetailedUser[] => {
     );
 });
 
-// Actions (Client-Side methods calling server logic via API/RPC needed) (tetap sama)
+// Actions (Client-Side methods) - Tidak berubah
 const editUser = (userId: string) => {
     alert(`TODO: Implement edit functionality for user ID: ${userId}`);
-    // navigateTo(`/admin/users/${userId}/edit`);
 };
 
 const confirmSuspend = (user: DetailedUser) => {
@@ -158,28 +228,24 @@ const confirmSuspend = (user: DetailedUser) => {
     suspendError.value = null;
 };
 
-// Placeholder - requires server route/RPC for actual delete (tetap sama)
+// Fungsi suspendUser (memanggil API DELETE) - Tidak berubah
 const suspendUser = async () => {
-    if (!userToSuspend.value) return;
+   if (!userToSuspend.value) return;
     suspending.value = true;
     suspendError.value = null;
     try {
-        console.warn("Delete action requires a server API route: /api/admin/users/[id].delete.ts");
-
-        // ---- PASTIKAN ANDA SUDAH MEMBUAT API ROUTE DELETE ----
         const userIdToDelete = userToSuspend.value.id;
+        // Panggil API route DELETE
         const response = await $fetch(`/api/admin/users/${userIdToDelete}`, {
             method: 'DELETE',
         });
-        // -----------------------------------------------------
 
-        // Asumsikan respons memiliki properti 'success' atau 'error'
-        // @ts-ignore // Sementara abaikan type error jika struktur response belum pasti
+        // @ts-ignore
         if (response && response.success) {
-            console.log(`User ${userIdToDelete} successfully deleted.`);
+            const deletedEmail = userToSuspend.value.email; // Simpan email sebelum null
             userToSuspend.value = null;
             await refresh(); // Refresh daftar pengguna
-            alert(`Pengguna ${userToSuspend.value?.email || userIdToDelete} berhasil dihapus.`);
+            alert(`Pengguna ${deletedEmail || userIdToDelete} berhasil dihapus.`);
         } else {
              // @ts-ignore
             throw new Error(response?.error || 'Gagal menghapus pengguna dari server.');
@@ -187,7 +253,6 @@ const suspendUser = async () => {
 
     } catch (err: any) {
         console.error("Error deleting user:", err);
-        // Coba dapatkan pesan error yang lebih spesifik dari $fetch
         const message = err.data?.message || err.statusMessage || err.message || 'Terjadi kesalahan saat menghapus pengguna.';
         suspendError.value = message;
         alert(`Gagal menghapus pengguna: ${message}`);
@@ -196,7 +261,7 @@ const suspendUser = async () => {
     }
 };
 
-// Utility Functions (Client-Side) (tetap sama)
+// Utility Functions (Client-Side) - Tidak berubah
 const formatDate = (dateString: string | undefined): string => {
     if (!dateString) return '-';
     try { return new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
@@ -209,7 +274,7 @@ const getStatusClasses = (confirmedAt: string | null | undefined): string => {
 </script>
 
 <style scoped>
-/* Scoped styles (tetap sama) */
+/* Scoped styles (sama seperti sebelumnya) */
 .error-panel { background-color: rgba(220, 38, 38, 0.2); border-color: rgba(239, 68, 68, 0.5); }
 .text-red-400 { color: #f87171; }
 .text-red-300 { color: #fca5a5; }
@@ -220,4 +285,16 @@ const getStatusClasses = (confirmedAt: string | null | undefined): string => {
 .text-green-400 { color: #4ade80; }
 .text-yellow-400 { color: #facc15; }
 .text-slate-400 { color: #94a3b8; }
+/* Style untuk debug info */
+details > summary {
+    list-style: none;
+}
+details > summary::-webkit-details-marker {
+    display: none;
+}
+pre {
+    font-family: monospace;
+    font-size: 0.75rem; /* text-xs */
+    line-height: 1.25;
+}
 </style>

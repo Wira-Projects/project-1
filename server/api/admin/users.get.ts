@@ -1,10 +1,9 @@
 // server/api/admin/users.get.ts
 import { serverSupabaseUser, serverSupabaseClient } from '#supabase/server';
-// ✅ PERBAIKAN: Impor useRuntimeConfig dari #imports, bukan h3 secara langsung
 import { createError, defineEventHandler, H3Event } from 'h3';
-import { useRuntimeConfig } from '#imports'; // <-- Impor yang benar
+import { useRuntimeConfig } from '#imports';
 
-// Definisikan tipe DetailedUser di sini atau impor dari file terpisah
+// Tipe untuk data pengguna
 interface DetailedUser {
     id: string;
     email?: string;
@@ -19,101 +18,179 @@ interface DetailedUser {
     } | null;
 }
 
-export default defineEventHandler(async (event: H3Event): Promise<DetailedUser[]> => {
-  // Gunakan useRuntimeConfig yang diimpor dari #imports
-  const config = useRuntimeConfig(event);
-  const adminEmail = config.public.adminEmail; // Ambil dari public runtime config
-  const serviceKey = config.supabaseServiceKey; // Ambil dari private runtime config (hanya server)
+// Tipe untuk informasi debug
+interface DebugInfo {
+    invoked: boolean;
+    expectedAdminEmail?: string | null;
+    serviceKeyPresent?: boolean;
+    serverUserEmail?: string | null;
+    accessGranted?: boolean;
+    errorMessage?: string;
+    step?: string; // Menunjukkan langkah terakhir yang berhasil atau gagal
+}
 
-  // -- LOGGING UNTUK DEBUGGING --
-  console.log('API Route: /api/admin/users.get.ts invoked.');
-  console.log('API Route: Expected Admin Email:', adminEmail);
-  // Hati-hati! Jangan log serviceKey di production
-  // console.log('API Route: Service Key Present:', !!serviceKey);
-  // --- AKHIR LOGGING ---
+// Tipe respons gabungan
+interface ApiResponse {
+    users: DetailedUser[];
+    debug: DebugInfo;
+}
 
-  if (!serviceKey) {
-    console.error('API Route Error: Service key (supabaseServiceKey) is missing in server runtimeConfig.');
-    throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Service key missing.' });
-  }
-  if (!adminEmail) {
-     console.error('API Route Error: Admin email (public.adminEmail) is missing in runtimeConfig.');
-     // Anda mungkin ingin throw error di sini juga, atau biarkan pemeriksaan user gagal
-     // throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Admin email missing.' });
-  }
+// Tipe respons error gabungan
+interface ApiErrorResponse {
+    error: {
+      statusCode: number;
+      statusMessage: string;
+      data?: any; // H3Error bisa punya data tambahan
+    };
+    debug: DebugInfo;
+}
 
+export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | ApiErrorResponse> => {
+    // Inisialisasi objek debug
+    const debugInfo: DebugInfo = {
+        invoked: true,
+        expectedAdminEmail: null,
+        serviceKeyPresent: false,
+        serverUserEmail: null,
+        accessGranted: false,
+        step: 'Initializing'
+    };
 
-  // Dapatkan pengguna saat ini & validasi status admin
-  const currentUser = await serverSupabaseUser(event);
-  // -- LOGGING UNTUK DEBUGGING --
-  console.log('API Route: Current User Email from serverSupabaseUser:', currentUser?.email || 'null/undefined');
-  // --- AKHIR LOGGING ---
+    try {
+        debugInfo.step = 'Reading runtime config';
+        const config = useRuntimeConfig(event);
+        debugInfo.expectedAdminEmail = config.public.adminEmail || null;
+        const serviceKey = config.supabaseServiceKey;
+        debugInfo.serviceKeyPresent = !!serviceKey;
 
-  if (!currentUser || currentUser.email !== adminEmail) {
-    console.warn(`API Route: Access Denied. User: ${currentUser?.email || 'unauthenticated'}, Expected Admin: ${adminEmail}`);
-    throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
-  }
+        // Validasi Service Key
+        if (!serviceKey) {
+            debugInfo.step = 'Error: Service key missing';
+            debugInfo.errorMessage = 'Server configuration error: Service key missing.';
+            console.error('API Route Error:', debugInfo.errorMessage);
+            // Kembalikan objek error dengan debug info
+            return {
+                error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(),
+                debug: debugInfo
+            };
+        }
+        if (!debugInfo.expectedAdminEmail) {
+            debugInfo.step = 'Warning: Admin email missing';
+            debugInfo.errorMessage = 'Server configuration error: Admin email missing in public runtimeConfig.';
+            console.warn('API Route Warning:', debugInfo.errorMessage);
+            // Lanjutkan, tapi catat di debug
+        }
 
-  // -- LOGGING UNTUK DEBUGGING --
-  console.log('API Route: Admin access granted.');
-  // --- AKHIR LOGGING ---
+        // Validasi Pengguna Admin
+        debugInfo.step = 'Validating current user';
+        const currentUser = await serverSupabaseUser(event);
+        debugInfo.serverUserEmail = currentUser?.email || null;
 
-  // Buat admin client
-  const adminClient = await serverSupabaseClient(event, { supabaseKey: serviceKey });
-  if (!adminClient) {
-    console.error('API Route Error: Failed to create Supabase admin client.');
-    throw createError({ statusCode: 500, statusMessage: 'Failed to create Supabase admin client.' });
-  }
+        if (!currentUser || currentUser.email !== debugInfo.expectedAdminEmail) {
+            debugInfo.step = 'Error: Access denied';
+            debugInfo.errorMessage = `Access Denied. User: ${debugInfo.serverUserEmail || 'unauthenticated'}, Expected Admin: ${debugInfo.expectedAdminEmail}`;
+            console.warn('API Route:', debugInfo.errorMessage);
+            // Kembalikan objek error dengan debug info
+            return {
+                error: createError({ statusCode: 403, statusMessage: 'Forbidden' }).toJSON(),
+                debug: debugInfo
+            };
+        }
+        debugInfo.accessGranted = true;
 
-  try {
-    // Fetch users
-    const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({});
+        // Buat Admin Client
+        debugInfo.step = 'Creating Supabase admin client';
+        const adminClient = await serverSupabaseClient(event, { supabaseKey: serviceKey });
+        if (!adminClient) {
+            debugInfo.step = 'Error: Failed to create admin client';
+            debugInfo.errorMessage = 'Failed to create Supabase admin client.';
+            console.error('API Route Error:', debugInfo.errorMessage);
+            return {
+                error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(),
+                debug: debugInfo
+            };
+        }
 
-    if (listError) {
-      console.error('API Route Error: Failed to list users:', listError.message);
-      throw createError({ statusCode: 500, statusMessage: `Failed to list users: ${listError.message}` });
-    }
-    if (!userData || !userData.users) {
-        console.log('API Route: No users found or userData is null.');
-        return [];
-    }
+        // Fetch Users
+        debugInfo.step = 'Fetching users list';
+        const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({});
 
-    // Fetch profiles & organizations
-    const userIds = userData.users.map(u => u.id);
-    if (userIds.length === 0) {
-        console.log('API Route: User list is empty, skipping profile/org fetch.');
-        return [];
-    }
+        if (listError) {
+            debugInfo.step = 'Error: Failed fetching users list';
+            debugInfo.errorMessage = `Failed to list users: ${listError.message}`;
+            console.error('API Route Error:', debugInfo.errorMessage);
+            return {
+                error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(),
+                debug: debugInfo
+            };
+        }
+        if (!userData || !userData.users) {
+            debugInfo.step = 'Completed: No users found';
+            return { users: [], debug: debugInfo };
+        }
 
-    const { data: profiles, error: profileError } = await adminClient
-        .from('profiles').select('user_id, full_name, current_organization_id').in('user_id', userIds);
-    if (profileError) console.error("API Route Warning: Error fetching profiles:", profileError.message); // Log sebagai warning
+        // Fetch Profiles & Organizations (dengan penanganan error non-fatal)
+        const userIds = userData.users.map(u => u.id);
+        if (userIds.length === 0) {
+            debugInfo.step = 'Completed: User list empty, skipped profile fetch';
+            return { users: [], debug: debugInfo };
+        }
 
-    const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
-    let organizationsMap: Map<number, { name?: string }> = new Map();
-    if (organizationIds.length > 0) {
-        const { data: organizations, error: orgError } = await adminClient
-            .from('organizations').select('id, name').in('id', organizationIds);
-        if (orgError) console.error("API Route Warning: Error fetching organizations:", orgError.message); // Log sebagai warning
-        else if (organizations) organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
-    }
+        debugInfo.step = 'Fetching profiles';
+        let profiles: any[] | null = null;
+        try {
+            const { data, error } = await adminClient
+                .from('profiles').select('user_id, full_name, current_organization_id').in('user_id', userIds);
+            if (error) throw error;
+            profiles = data;
+        } catch (profileError: any) {
+            debugInfo.step = 'Warning: Error fetching profiles, continuing...';
+            debugInfo.errorMessage = `Error fetching profiles: ${profileError.message}`;
+            console.warn("API Route Warning:", debugInfo.errorMessage);
+        }
 
-    // Combine data
-    const detailedUsers: DetailedUser[] = userData.users.map(user => {
-        const profile = profiles?.find(p => p.user_id === user.id) || null;
-        const organization = profile?.current_organization_id ? organizationsMap.get(profile.current_organization_id) || null : null;
+        debugInfo.step = 'Fetching organizations';
+        let organizationsMap: Map<number, { name?: string }> = new Map();
+        const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
+        if (organizationIds.length > 0) {
+            try {
+                const { data: organizations, error } = await adminClient
+                    .from('organizations').select('id, name').in('id', organizationIds);
+                if (error) throw error;
+                if (organizations) {
+                    organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
+                }
+            } catch (orgError: any) {
+                debugInfo.step = 'Warning: Error fetching organizations, continuing...';
+                debugInfo.errorMessage = `Error fetching organizations: ${orgError.message}`;
+                console.warn("API Route Warning:", debugInfo.errorMessage);
+            }
+        }
+
+        // Combine Data
+        debugInfo.step = 'Combining user data';
+        const detailedUsers: DetailedUser[] = userData.users.map(user => {
+            const profile = profiles?.find(p => p.user_id === user.id) || null;
+            const organization = profile?.current_organization_id ? organizationsMap.get(profile.current_organization_id) || null : null;
+            return {
+                id: user.id, email: user.email, created_at: user.created_at, email_confirmed_at: user.email_confirmed_at,
+                profile: profile ? { full_name: profile.full_name, current_organization_id: profile.current_organization_id, organization: organization } : null,
+            };
+        });
+
+        debugInfo.step = `Completed: Successfully fetched ${detailedUsers.length} users.`;
+        return { users: detailedUsers, debug: debugInfo };
+
+    } catch (error: any) {
+        // Tangkap error tak terduga
+        debugInfo.step = 'Error: Unhandled exception';
+        debugInfo.errorMessage = error.message || 'Internal Server Error in API route.';
+        console.error('API Route Error:', error);
+        // Kembalikan objek error dengan debug info
+        const h3Error = createError({ statusCode: error.statusCode || 500, statusMessage: debugInfo.errorMessage, data: error.data });
         return {
-            id: user.id, email: user.email, created_at: user.created_at, email_confirmed_at: user.email_confirmed_at,
-            profile: profile ? { full_name: profile.full_name, current_organization_id: profile.current_organization_id, organization: organization } : null,
+            error: h3Error.toJSON(),
+            debug: debugInfo
         };
-    });
-
-    console.log(`API Route: Successfully fetched ${detailedUsers.length} users.`); // Log jumlah hasil
-    return detailedUsers;
-
-  } catch (error: any) {
-    console.error('API Route Error in /api/admin/users:', error);
-    if (error.statusCode && error.statusMessage) throw error; // Re-throw H3Error
-    throw createError({ statusCode: 500, statusMessage: error.message || 'Internal Server Error fetching users.' });
-  }
+    }
 });
