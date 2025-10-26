@@ -20,8 +20,10 @@ export default defineNuxtConfig({
   supabase: {
     redirectOptions: {
       login: '/login', // Halaman login
-      callback: '/confirm', // Halaman callback setelah login (penting untuk SSO)
-      exclude: ['/register'], // Halaman yang tidak perlu autentikasi
+      callback: '/confirm', // Halaman callback (tidak perlu dikecualikan, tapi kita tambahkan untuk keamanan)
+
+      // ✅ PERBAIKAN: Tambahkan '/' ke daftar exclude
+      exclude: ['/', '/register', '/confirm'], // Halaman yang TIDAK memerlukan autentikasi
     }
   }
 })
