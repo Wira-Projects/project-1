@@ -6,15 +6,29 @@
         <div class="text-2xl font-bold">
           <NuxtLink to="/"><i class="fas fa-brain text-cyan-400"></i> Cortex<span class="font-light text-violet-400">Deploy</span></NuxtLink>
         </div>
+        
         <div class="hidden md:flex space-x-8 items-center text-slate-300">
           <a href="/#features" class="hover:text-cyan-400 transition">Fitur</a>
           <a href="/#tech" class="hover:text-cyan-400 transition">Teknologi</a>
           <a href="/#marketplace" class="hover:text-cyan-400 transition">Marketplace AI</a>
           <a href="/#pricing" class="hover:text-cyan-400 transition">Harga</a>
         </div>
+        
         <div class="flex items-center space-x-4">
-          <NuxtLink to="/login" class="hidden md:block text-slate-300 hover:text-cyan-400 transition">Login</NuxtLink>
-          <NuxtLink to="/register" class="bg-cyan-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-cyan-600 transition">Daftar Sekarang</NuxtLink>
+          
+          <template v-if="!user">
+            <NuxtLink to="/login" class="hidden md:block text-slate-300 hover:text-cyan-400 transition">Login</NuxtLink>
+            <NuxtLink to="/register" class="bg-cyan-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-cyan-600 transition">Daftar Sekarang</NuxtLink>
+          </template>
+          
+          <template v-else>
+            <NuxtLink to="/dashboard" class="hidden md:block text-slate-300 hover:text-violet-400 transition font-bold">Dasbor</NuxtLink>
+            
+            <button @click="signOut" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600 transition">
+              <i class="fas fa-sign-out-alt mr-2"></i> Logout
+            </button>
+          </template>
+
         </div>
       </nav>
     </header>
@@ -32,7 +46,29 @@
 </template>
 
 <script setup lang="ts">
-// Bagian script ini sudah SEMPURNA. Tidak perlu diubah.
+// Tambahkan import Supabase dan penggunaan Nuxt/Vue Composables
+import { useSupabaseUser, useSupabaseClient } from '#imports';
+
+// Mendapatkan status pengguna saat ini
+const user = useSupabaseUser();
+const supabase = useSupabaseClient();
+const router = useRouter();
+
+// Fungsi untuk menangani Logout
+const signOut = async () => {
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+    
+    // Alihkan pengguna ke halaman utama atau halaman login setelah logout
+    await router.push('/'); 
+  } catch (error) {
+    console.error('Error saat logout:', error.message);
+    alert('Gagal keluar: ' + error.message);
+  }
+};
+
+// Bagian useHead tetap sama (Sempurna)
 useHead({
   // title akan di-override oleh halaman individual jika diset
   titleTemplate: (titleChunk) => {
@@ -58,7 +94,7 @@ useHead({
 </script>
 
 <style>
-/* Style global sebaiknya ditaruh di file terpisah (mis: assets/css/main.css) 
-   dan diimpor di nuxt.config.ts, tapi membiarkannya kosong di sini juga tidak masalah.
+/* Style global sebaiknya ditaruh di file terpisah (mis: assets/css/main.css) 
+   dan diimpor di nuxt.config.ts, tapi membiarkannya kosong di sini juga tidak masalah.
 */
 </style>
