@@ -96,10 +96,11 @@
 import { ref, computed } from 'vue';
 // Import composables Nuxt yang aman untuk client & server
 // Auto-import seharusnya menangani ini: useAsyncData, definePageMeta, useHead, useRuntimeConfig, createError, useRequestEvent, useNuxtApp
+// Hapus import manual jika tidak diperlukan lagi berkat auto-imports
 // import { useAsyncData, definePageMeta, useHead, useRuntimeConfig, createError, useRequestEvent, useNuxtApp } from '#app';
 
 
-// Tipe DetailedUser
+// Tipe DetailedUser (tetap sama)
 interface DetailedUser {
     id: string;
     email?: string;
@@ -115,7 +116,7 @@ interface DetailedUser {
 }
 
 // ----------------------------------------------------
-// Meta Halaman & Middleware
+// Meta Halaman & Middleware (tetap sama)
 // ----------------------------------------------------
 definePageMeta({
   layout: 'admin',
@@ -127,7 +128,7 @@ useHead({
 });
 
 // ----------------------------------------------------
-// State
+// State (tetap sama)
 // ----------------------------------------------------
 const searchQuery = ref('');
 const userToSuspend = ref<DetailedUser | null>(null);
@@ -135,22 +136,24 @@ const suspending = ref(false);
 const suspendError = ref<string | null>(null);
 
 // ----------------------------------------------------
-// Data Fetching Menggunakan useAsyncData
+// Data Fetching Menggunakan useAsyncData (PERBAIKAN DI SINI)
 // ----------------------------------------------------
 const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser[]>('adminUsers', async () => {
     // Jalankan logika server HANYA jika process.server true
     if (process.server) {
-        // Import composable server DI DALAM blok ini
-        const { serverSupabaseClient, serverSupabaseUser } = await import('#supabase/server');
-        // Import composable lain yang mungkin hanya ada di server context #app
+        // TIDAK PERLU IMPORT MANUAL '#supabase/server'
+        // const { serverSupabaseClient, serverSupabaseUser } = await import('#supabase/server');
+
+        // Gunakan composables yang tersedia otomatis di konteks server
         const event = useRequestEvent(); // Harus ada di server
-        const config = useRuntimeConfig(); // Config bisa diakses global, tapi event diperlukan untuk client
+        const config = useRuntimeConfig();
         const adminEmail = config.public.adminEmail;
-        const serviceKey = config.supabaseServiceKey; // Ambil dari runtime config server
+        const serviceKey = config.supabaseServiceKey;
 
         if (!event) throw createError({ statusCode: 500, statusMessage: 'Server context error.' });
         if (!serviceKey) throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Service key missing.' });
 
+        // Composables ini akan tersedia secara otomatis
         const currentUser = await serverSupabaseUser(event);
         if (!currentUser || currentUser.email !== adminEmail) {
             throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
@@ -159,7 +162,7 @@ const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser
         const adminClient = await serverSupabaseClient(event, { supabaseKey: serviceKey });
         if (!adminClient) throw createError({ statusCode: 500, statusMessage: 'Failed to create Supabase admin client.' });
 
-        // Fetch users
+        // Fetch users (logika selanjutnya tetap sama)
         const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({});
         if (listError) throw createError({ statusCode: 500, statusMessage: `Failed to list users: ${listError.message}` });
         if (!userData || !userData.users) return [];
@@ -181,7 +184,7 @@ const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser
             else if (organizations) organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
         }
 
-        // Combine data
+        // Combine data (logika combine data tetap sama)
         const detailedUsers: DetailedUser[] = userData.users.map(user => {
             const profile = profiles?.find(p => p.user_id === user.id) || null;
             const organization = profile?.current_organization_id ? organizationsMap.get(profile.current_organization_id) || null : null;
@@ -191,27 +194,25 @@ const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser
             };
         });
 
+        // Pastikan return di akhir blok if
         return detailedUsers;
 
     } else {
-        // Client-side: Coba ambil data dari payload SSR jika ada, jika tidak, return []
+        // Client-side: (logika fallback tetap sama)
         console.warn("useAsyncData factory running on client for adminUsers. Trying to use SSR payload.");
         const nuxtApp = useNuxtApp();
-        // Kunci payload harus cocok dengan kunci useAsyncData ('adminUsers')
         const ssrData = nuxtApp.payload.data['adminUsers'];
-        return (ssrData || []) as DetailedUser[]; // Kembalikan data SSR atau array kosong
+        return (ssrData || []) as DetailedUser[];
     }
 }, {
     default: () => [], // Nilai default penting
-    // lazy: false // Pastikan data di-fetch di server sebelum render (default)
 });
 
 
 // ----------------------------------------------------
-// Filtering (Client-Side)
+// Filtering (Client-Side) (tetap sama)
 // ----------------------------------------------------
 const filteredUsers = computed((): DetailedUser[] => {
-    // Pastikan users.value adalah array sebelum filter
     const userList = Array.isArray(users.value) ? users.value : [];
     if (!searchQuery.value) return userList;
     const lowerSearch = searchQuery.value.toLowerCase();
@@ -222,7 +223,7 @@ const filteredUsers = computed((): DetailedUser[] => {
 });
 
 // ----------------------------------------------------
-// Actions (Client-Side methods calling server logic via API/RPC needed)
+// Actions (Client-Side methods calling server logic via API/RPC needed) (tetap sama)
 // ----------------------------------------------------
 const editUser = (userId: string) => {
     alert(`TODO: Implement edit functionality for user ID: ${userId}`);
@@ -234,7 +235,7 @@ const confirmSuspend = (user: DetailedUser) => {
     suspendError.value = null;
 };
 
-// Placeholder - requires server route/RPC for actual delete
+// Placeholder - requires server route/RPC for actual delete (tetap sama)
 const suspendUser = async () => {
     if (!userToSuspend.value) return;
     suspending.value = true;
@@ -265,17 +266,16 @@ const suspendUser = async () => {
 
     } catch (err: any) {
         console.error("Error deleting user:", err);
-        // Tampilkan error dari $fetch jika ada
         const message = err.data?.message || err.message || 'Terjadi kesalahan saat menghapus pengguna.';
         suspendError.value = message;
-        alert(`Gagal menghapus pengguna: ${message}`); // Tampilkan juga alert
+        alert(`Gagal menghapus pengguna: ${message}`);
     } finally {
         suspending.value = false;
     }
 };
 
 // ----------------------------------------------------
-// Utility Functions (Client-Side)
+// Utility Functions (Client-Side) (tetap sama)
 // ----------------------------------------------------
 const formatDate = (dateString: string | undefined): string => {
     if (!dateString) return '-';
@@ -289,7 +289,7 @@ const getStatusClasses = (confirmedAt: string | null | undefined): string => {
 </script>
 
 <style scoped>
-/* Scoped styles */
+/* Scoped styles (tetap sama) */
 .error-panel { background-color: rgba(220, 38, 38, 0.2); border-color: rgba(239, 68, 68, 0.5); }
 .text-red-400 { color: #f87171; }
 .text-red-300 { color: #fca5a5; }
