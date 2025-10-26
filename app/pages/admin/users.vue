@@ -71,10 +71,9 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-// PERBAIKAN: Import composable server secara eksplisit
-import { useRequestEvent, useRuntimeConfig, createError } from '#app'; // Import dari Nuxt
-import { serverSupabaseClient, serverSupabaseUser } from '#supabase/server'; // Import server-specific dari modul Supabase
-// Composable client-side (useSupabaseClient, useAsyncData, definePageMeta, useHead) seharusnya tetap auto-imported
+// Import composable HANYA yang diperlukan di top-level (client & server)
+// Composable server akan diimpor DI DALAM useAsyncData
+import { useAsyncData, definePageMeta, useHead, useRuntimeConfig, createError, useRequestEvent } from '#app';
 
 // Tipe DetailedUser (tetap sama)
 interface DetailedUser {
@@ -96,11 +95,11 @@ interface DetailedUser {
 // ----------------------------------------------------
 definePageMeta({
   layout: 'admin',
-  middleware: 'admin-auth' //
+  middleware: 'admin-auth'
 });
 
 useHead({
-  title: 'Manajemen Pengguna', // Judul akan otomatis ditambahkan "| Admin" oleh layout
+  title: 'Manajemen Pengguna',
 });
 
 // ----------------------------------------------------
@@ -112,13 +111,15 @@ const searchQuery = ref('');
 // Data Fetching Menggunakan useAsyncData (Server-Side)
 // ----------------------------------------------------
 const { data: users, pending, error } = await useAsyncData<DetailedUser[]>('adminUsers', async () => {
-    // Kode di dalam factory useAsyncData ini akan berjalan di server
+    // PERBAIKAN: Import composable server DI DALAM factory function
+    const { serverSupabaseClient, serverSupabaseUser } = await import('#supabase/server');
+
     const event = useRequestEvent();
     if (!event) {
         console.error("useRequestEvent returned undefined. Cannot run server-side logic.");
         throw createError({ statusCode: 500, statusMessage: 'Server context not available.' });
     }
-    const config = useRuntimeConfig(event); // Gunakan event di sini
+    const config = useRuntimeConfig(event);
     const adminEmail = config.public.adminEmail;
 
     // 1. Verifikasi pengguna saat ini adalah admin
@@ -134,9 +135,7 @@ const { data: users, pending, error } = await useAsyncData<DetailedUser[]>('admi
     }
 
     // 3. Ambil daftar pengguna
-    const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({
-        // page: 1, perPage: 1000 // Sesuaikan paginasi jika perlu
-    });
+    const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({ });
 
     if (listError) {
         console.error("Server-side Error listing users:", listError);
