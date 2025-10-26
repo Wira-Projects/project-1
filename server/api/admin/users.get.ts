@@ -1,6 +1,8 @@
 // server/api/admin/users.get.ts
 import { serverSupabaseUser, serverSupabaseClient } from '#supabase/server';
-import { createError, defineEventHandler, H3Event, readValidatedBody, getQuery, useRuntimeConfig } from 'h3'; // Pastikan useRuntimeConfig diimpor dari h3 atau #imports
+// ✅ PERBAIKAN: Impor useRuntimeConfig dari #imports, bukan h3 secara langsung
+import { createError, defineEventHandler, H3Event } from 'h3';
+import { useRuntimeConfig } from '#imports'; // <-- Impor yang benar
 
 // Definisikan tipe DetailedUser di sini atau impor dari file terpisah
 interface DetailedUser {
@@ -18,8 +20,7 @@ interface DetailedUser {
 }
 
 export default defineEventHandler(async (event: H3Event): Promise<DetailedUser[]> => {
-  // Gunakan useRuntimeConfig dalam konteks event handler
-  // Pastikan variabel ini ada di runtimeConfig nuxt.config.ts
+  // Gunakan useRuntimeConfig yang diimpor dari #imports
   const config = useRuntimeConfig(event);
   const adminEmail = config.public.adminEmail; // Ambil dari public runtime config
   const serviceKey = config.supabaseServiceKey; // Ambil dari private runtime config (hanya server)
