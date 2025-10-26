@@ -22,6 +22,8 @@ export default defineNuxtConfig({
       login: '/login', // Halaman login
       callback: '/confirm', // Halaman callback (tidak perlu dikecualikan, tapi kita tambahkan untuk keamanan)
 
+      home: '/dashboard',
+      
       // ✅ PERBAIKAN: Tambahkan '/' ke daftar exclude
       exclude: ['/', '/register', '/confirm'], // Halaman yang TIDAK memerlukan autentikasi
     }
