@@ -75,7 +75,7 @@
       </div>
 
       <div>
-        <button @click="signOut" class="flex items-center py-2 px-4 rounded-lg text-slate-300 hover:bg-slate-700 w-full">
+        <button @click="showConfirmModal = true" class="flex items-center py-2 px-4 rounded-lg text-slate-300 hover:bg-slate-700 w-full">
           <i class="fas fa-sign-out-alt w-6 text-center mr-3"></i> Logout
         </button>
       </div>
@@ -91,6 +91,34 @@
 
         <slot />
     </main>
+    
+    <div v-if="showConfirmModal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black opacity-70"></div>
+        
+        <div class="bg-slate-800 p-6 rounded-xl shadow-2xl z-50 max-w-sm w-full border border-slate-700">
+            <h3 class="text-xl font-bold text-amber-400 mb-4 flex items-center">
+                <i class="fas fa-triangle-exclamation mr-3"></i> Konfirmasi Logout
+            </h3>
+            <p class="text-slate-300 mb-6">
+                Apakah Anda yakin ingin keluar dari Admin Panel? Anda harus login kembali untuk mengakses halaman ini.
+            </p>
+            
+            <div class="flex justify-end space-x-3">
+                <button 
+                    @click="handleConfirm(false)" 
+                    class="py-2 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 font-medium transition"
+                >
+                    Batal
+                </button>
+                <button 
+                    @click="handleConfirm(true)" 
+                    class="py-2 px-4 bg-red-600 hover:bg-red-700 rounded-lg text-white font-medium transition"
+                >
+                    <i class="fas fa-right-from-bracket mr-2"></i> Ya, Keluar
+                </button>
+            </div>
+        </div>
+    </div>
   </div>
 </template>
 
@@ -99,19 +127,19 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 const supabase = useSupabaseClient();
 const router = useRouter();
 
-// State untuk Sidebar
-const isSidebarOpen = ref(true); // Default terbuka di desktop
-const isMobile = ref(false); // State untuk mendeteksi mode mobile (lebar < 1024px)
+// State Sidebar
+const isSidebarOpen = ref(true);
+const isMobile = ref(false);
 
-// Deteksi lebar layar
+// State Modal Konfirmasi
+const showConfirmModal = ref(false);
+
+// Deteksi lebar layar (Logika Responsif)
 const checkScreenSize = () => {
-    // 1024px adalah breakpoint 'lg' Tailwind
     isMobile.value = window.innerWidth < 1024;
-    // Di desktop, kita ingin sidebar selalu terbuka
     if (!isMobile.value) {
         isSidebarOpen.value = true;
     }
-    // Jika di mobile, sidebar akan tertutup secara default saat pertama kali load
     if (isMobile.value && typeof window !== 'undefined' && !sessionStorage.getItem('sidebar_closed')) {
         isSidebarOpen.value = false;
         sessionStorage.setItem('sidebar_closed', 'true');
@@ -127,31 +155,31 @@ onUnmounted(() => {
     window.removeEventListener('resize', checkScreenSize);
 });
 
-// Fungsi untuk logout DENGAN KONFIRMASI
-const signOut = async () => {
-    // Tampilkan dialog konfirmasi
-    if (!confirm('Apakah Anda yakin ingin keluar dari Admin Panel?')) {
-        // Jika pengguna menekan Cancel, hentikan proses
-        return;
-    }
+// Fungsi yang dipanggil saat tombol di modal diklik
+const handleConfirm = async (confirmed) => {
+    showConfirmModal.value = false; // Tutup modal terlepas dari pilihan
 
-    try {
-        const { error } = await supabase.auth.signOut();
-        if (error) throw error;
-        
-        // Redirect ke halaman login setelah berhasil logout
-        await router.push('/login');
-    } catch (error) {
-        console.error('Error saat logout:', error.message);
-        alert('Gagal keluar: ' + error.message);
+    if (confirmed) {
+        // Hanya lanjutkan logout jika pengguna menekan "Ya, Keluar"
+        try {
+            const { error } = await supabase.auth.signOut();
+            if (error) throw error;
+            
+            await router.push('/login');
+        } catch (error) {
+            console.error('Error saat logout:', error.message);
+            alert('Gagal keluar: ' + error.message);
+        }
     }
+    // Jika 'confirmed' false (Batal), tidak terjadi apa-apa
 };
 </script>
 
 <style scoped>
 /* Styling Tambahan untuk Layout */
 .bg-slate-900 { background-color: #0f172a; }
-.bg-slate-800 { border-color: #1e293b; }
+.bg-slate-800 { background-color: #1e293b; } /* Digunakan untuk modal background */
+.border-slate-800 { border-color: #1e293b; }
 .hover\:bg-slate-700:hover { background-color: #334155; }
 .border-l-3 { border-left-width: 3px; }
 .border-amber-500 { border-color: #f59e0b; }
