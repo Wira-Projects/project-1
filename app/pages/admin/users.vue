@@ -70,19 +70,20 @@
 </template>
 
 <script setup lang="ts">
-// Tidak perlu import eksplisit untuk composables Nuxt (seharusnya di-auto-import)
 import { ref, computed } from 'vue';
-// import type { User } from '@supabase/supabase-js'; // Tetap bagus untuk referensi tipe
+// Composable Nuxt lain seperti definePageMeta, useHead, useRuntimeConfig,
+// useSupabaseClient, serverSupabaseClient, useAsyncData, useRequestEvent, serverSupabaseUser, createError
+// seharusnya di-auto-import oleh Nuxt 3.
 
-// Tipe DetailedUser (tetap sama)
+// Tipe DetailedUser
 interface DetailedUser {
     id: string;
     email?: string;
     created_at?: string;
-    email_confirmed_at?: string | null; // Perbaikan: Bisa jadi null
+    email_confirmed_at?: string | null;
     profile: {
         full_name?: string;
-        current_organization_id?: number | null; // Perbaikan: Bisa jadi null
+        current_organization_id?: number | null;
         organization?: {
             name?: string;
         } | null;
@@ -94,129 +95,124 @@ interface DetailedUser {
 // ----------------------------------------------------
 definePageMeta({
   layout: 'admin',
-  middleware: 'admin-auth'
+  middleware: 'admin-auth' //
 });
 
 useHead({
-  title: 'Manajemen Pengguna',
+  title: 'Manajemen Pengguna', // Judul akan otomatis ditambahkan "| Admin" oleh layout
 });
 
 // ----------------------------------------------------
-// Supabase Client & Data Fetching
+// State untuk Pencarian
 // ----------------------------------------------------
-const supabase = useSupabaseClient();
 const searchQuery = ref('');
 
-// Fungsi fetchUsers (sedikit dioptimalkan)
-const fetchUsers = async (): Promise<DetailedUser[]> => {
-  console.warn("PERINGATAN: supabase.auth.admin.listUsers() dipanggil di sisi klien. Pindahkan ke server route untuk keamanan.");
+// ----------------------------------------------------
+// Data Fetching Menggunakan useAsyncData (Server-Side)
+// ----------------------------------------------------
+const { data: users, pending, error } = await useAsyncData<DetailedUser[]>('adminUsers', async () => {
+    // Kode di dalam factory useAsyncData ini akan berjalan di server
+    const event = useRequestEvent(); // Dapatkan event request (hanya tersedia di server)
+    if (!event) {
+        // Handle case where event might not be available (e.g., during client-side navigation if not handled properly)
+        // Although with `await useAsyncData` without `lazy: true`, this should typically run server-side first.
+        console.error("useRequestEvent returned undefined. Fetching cannot proceed server-side without event context.");
+        throw createError({ statusCode: 500, statusMessage: 'Server context not available.' });
+    }
+    const config = useRuntimeConfig(event); // Akses runtime config (termasuk service key)
+    const adminEmail = config.public.adminEmail;
 
-  const { data: userData, error: listError } = await supabase.auth.admin.listUsers({
-      // page: 1, perPage: 1000 // defaultnya 50, ambil lebih banyak jika perlu
-  });
+    // 1. Verifikasi pengguna saat ini adalah admin (keamanan tambahan)
+    const currentUser = await serverSupabaseUser(event);
+    if (!currentUser || currentUser.email !== adminEmail) {
+        // Jika bukan admin, lempar error (middleware seharusnya sudah menangani ini, tapi lebih aman)
+        throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
+    }
 
-  if (listError) {
-      console.error("Error listing users:", listError);
-      throw listError;
-  }
-  if (!userData || !userData.users) {
-      return []; // Kembalikan array kosong jika tidak ada user
-  }
+    // 2. Buat admin client Supabase MENGGUNAKAN SERVICE KEY
+    // Penting: Gunakan service key dari runtime config (BUKAN process.env langsung di sini)
+    const adminClient = await serverSupabaseClient(event, { supabaseKey: config.supabaseServiceKey });
+    if (!adminClient) {
+        throw createError({ statusCode: 500, statusMessage: 'Supabase admin client not initialized.' });
+    }
 
-  // Ambil detail profil dan organisasi
-  const userIds = userData.users.map(u => u.id);
-  if (userIds.length === 0) return []; // Tidak perlu query jika tidak ada user ID
+    // 3. Ambil daftar pengguna menggunakan Admin API client
+    const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({
+        // page: 1, perPage: 1000 // Sesuaikan paginasi jika perlu
+    });
 
-  const { data: profiles, error: profileError } = await supabase
-      .from('profiles')
-      .select('user_id, full_name, current_organization_id')
-      .in('user_id', userIds);
+    if (listError) {
+        console.error("Server-side Error listing users:", listError);
+        throw createError({ statusCode: 500, statusMessage: `Failed to list users: ${listError.message}` });
+    }
+    if (!userData || !userData.users) return [];
 
-  if (profileError) {
-      console.error("Error fetching profiles:", profileError);
-      // Anda bisa memilih untuk melempar error atau melanjutkan tanpa data profil
-  }
+    // --- (Logika Join Profile & Organisasi tetap sama, tapi menggunakan adminClient) ---
+    const userIds = userData.users.map(u => u.id);
+    if (userIds.length === 0) return [];
 
-  const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
-  let organizationsMap: Map<number, { name?: string }> = new Map();
+    const { data: profiles, error: profileError } = await adminClient
+        .from('profiles') // Ganti 'profiles' jika perlu
+        .select('user_id, full_name, current_organization_id')
+        .in('user_id', userIds);
 
-  if (organizationIds.length > 0) {
-      const { data: organizations, error: orgError } = await supabase
-          .from('organizations')
-          .select('id, name')
-          .in('id', organizationIds);
+    if (profileError) console.error("Server-side Error fetching profiles:", profileError);
 
-      if (orgError) {
-          console.error("Error fetching organizations:", orgError);
-      } else if (organizations) {
-          organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
-      }
-  }
+    const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
+    let organizationsMap: Map<number, { name?: string }> = new Map();
 
-  // Gabungkan data
-  const detailedUsers: DetailedUser[] = userData.users.map(user => {
-    const profile = profiles?.find(p => p.user_id === user.id) || null;
-    const organization = profile?.current_organization_id
-        ? organizationsMap.get(profile.current_organization_id) || null
-        : null;
+    if (organizationIds.length > 0) {
+        const { data: organizations, error: orgError } = await adminClient
+            .from('organizations') // Ganti 'organizations' jika perlu
+            .select('id, name')
+            .in('id', organizationIds);
 
-    return {
-      id: user.id,
-      email: user.email,
-      created_at: user.created_at,
-      email_confirmed_at: user.email_confirmed_at,
-      profile: profile ? {
-          full_name: profile.full_name,
-          current_organization_id: profile.current_organization_id,
-          organization: organization
-      } : null,
-    };
-  });
+        if (orgError) console.error("Server-side Error fetching organizations:", orgError);
+        else if (organizations) organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
+    }
 
-  return detailedUsers;
-};
+    // Gabungkan data
+    const detailedUsers: DetailedUser[] = userData.users.map(user => {
+        const profile = profiles?.find(p => p.user_id === user.id) || null;
+        const organization = profile?.current_organization_id
+            ? organizationsMap.get(profile.current_organization_id) || null
+            : null;
+        return {
+            id: user.id, email: user.email, created_at: user.created_at, email_confirmed_at: user.email_confirmed_at,
+            profile: profile ? { full_name: profile.full_name, current_organization_id: profile.current_organization_id, organization: organization } : null,
+        };
+    });
+    // --- Akhir Logika Join ---
 
-
-// Gunakan useAsyncData
-const { data: users, pending, error } = useAsyncData<DetailedUser[]>('adminUsers', fetchUsers, {
-    default: () => []
+    return detailedUsers;
+}, {
+    default: () => [] // Nilai default
 });
 
 // ----------------------------------------------------
-// Filtering & Computed Properties
+// Filtering (Client-Side) - Tetap sama
 // ----------------------------------------------------
 const filteredUsers = computed((): DetailedUser[] => {
-  const userList = users.value || [];
-  if (!searchQuery.value) {
-    return userList;
-  }
-  const lowerSearch = searchQuery.value.toLowerCase();
-  // Filter berdasarkan email ATAU nama lengkap
-  return userList.filter(user =>
-    (user.email && user.email.toLowerCase().includes(lowerSearch)) ||
-    (user.profile?.full_name && user.profile.full_name.toLowerCase().includes(lowerSearch))
-  );
+    const userList = users.value || [];
+    if (!searchQuery.value) return userList;
+    const lowerSearch = searchQuery.value.toLowerCase();
+    return userList.filter(user =>
+        (user.email && user.email.toLowerCase().includes(lowerSearch)) ||
+        (user.profile?.full_name && user.profile.full_name.toLowerCase().includes(lowerSearch))
+    );
 });
 
 // ----------------------------------------------------
-// Utility Functions
+// Utility Functions (Client-Side) - Tetap sama
 // ----------------------------------------------------
 const formatDate = (dateString: string | undefined): string => {
-  if (!dateString) return '-';
-  try {
-    return new Date(dateString).toLocaleDateString('id-ID', {
-      day: '2-digit', month: 'short', year: 'numeric'
-    });
-  } catch (e) {
-    console.error("Invalid date format:", dateString, e);
-    return '-';
-  }
+    if (!dateString) return '-';
+    try { return new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
+    catch (e) { console.error("Invalid date format:", dateString, e); return '-'; }
 };
 
 const getStatusClasses = (confirmedAt: string | null | undefined): string => {
-  // Cukup periksa apakah confirmedAt ada (truthy)
-  return confirmedAt ? 'bg-green-500/30 text-green-400' : 'bg-yellow-500/30 text-yellow-400';
-  // TODO: Tambahkan logika untuk status 'Suspended'
+    return confirmedAt ? 'bg-green-500/30 text-green-400' : 'bg-yellow-500/30 text-yellow-400';
 };
 
 </script>
