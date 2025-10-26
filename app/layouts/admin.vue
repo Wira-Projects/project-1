@@ -123,9 +123,26 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
+// Menggunakan useHead untuk setting Title
+const { useHead, useSupabaseClient, useRouter } = await import('#imports');
+
 const supabase = useSupabaseClient();
 const router = useRouter();
+
+// ------------------------------------
+// PENAMBAHAN JUDUL DI LAYOUT
+// ------------------------------------
+useHead({
+  titleTemplate: (titleChunk) => {
+    // Menambahkan suffix " | Admin" ke setiap judul halaman admin
+    return titleChunk ? `${titleChunk} | Admin` : 'Admin Dashboard | CortexDeploy';
+  },
+  htmlAttrs: {
+    lang: 'id'
+  }
+});
+// ------------------------------------
 
 // State Sidebar
 const isSidebarOpen = ref(true);
@@ -160,7 +177,6 @@ const handleConfirm = async (confirmed) => {
     showConfirmModal.value = false; // Tutup modal terlepas dari pilihan
 
     if (confirmed) {
-        // Hanya lanjutkan logout jika pengguna menekan "Ya, Keluar"
         try {
             const { error } = await supabase.auth.signOut();
             if (error) throw error;
@@ -171,7 +187,6 @@ const handleConfirm = async (confirmed) => {
             alert('Gagal keluar: ' + error.message);
         }
     }
-    // Jika 'confirmed' false (Batal), tidak terjadi apa-apa
 };
 </script>
 
