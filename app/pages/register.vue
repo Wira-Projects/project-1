@@ -130,10 +130,9 @@ useHead({
   title: "Daftar",
 });
 
-// 1. Ambil klien Supabase
 const supabase = useSupabaseClient();
+const router = useRouter(); // Pastikan ini ada
 
-// 2. State management
 const name = ref("");
 const email = ref("");
 const password = ref("");
@@ -142,7 +141,7 @@ const loading = ref(false);
 const errorMsg = ref<string | null>(null);
 const successMsg = ref<string | null>(null);
 
-// 3. Fungsi Register Email/Password
+// Fungsi Register Email/Password
 const handleRegister = async () => {
   if (password.value !== confirmPassword.value) {
     errorMsg.value = "Password dan Konfirmasi Password tidak cocok!";
@@ -158,23 +157,16 @@ const handleRegister = async () => {
       email: email.value,
       password: password.value,
       options: {
-        // Simpan nama lengkap di metadata pengguna
-        data: {
-          full_name: name.value,
-        },
+        data: { full_name: name.value },
+        // REDIRECT KE HALAMAN INSTRUKSI verifikasi email
+        redirectTo: `${window.location.origin}/check-email`, 
       },
     });
 
     if (error) throw error;
-
-    // Tampilkan pesan sukses dan minta verifikasi email
-    successMsg.value = "Pendaftaran berhasil! Silakan cek email Anda untuk verifikasi.";
     
-    // Kosongkan form
-    name.value = '';
-    email.value = '';
-    password.value = '';
-    confirmPassword.value = '';
+    // Tampilkan pesan sukses secara fallback (jika redirect gagal)
+    successMsg.value = "Pendaftaran berhasil! Silakan cek email Anda untuk verifikasi.";
 
   } catch (error: any) {
     errorMsg.value = error.message;
@@ -183,18 +175,17 @@ const handleRegister = async () => {
   }
 };
 
-// 4. Fungsi Register Google SSO
+// Fungsi Register Google SSO
 const handleGoogleRegister = async () => {
   loading.value = true;
   errorMsg.value = null;
   const origin = window.location.origin;
 
   try {
-    // Supabase akan otomatis membuat akun baru jika belum terdaftar
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        // Redirect ke halaman '/confirm'
+        // Menggunakan /confirm sebagai callback Supabase, Nuxt akan menangani redirect final ke /dashboard
         redirectTo: `${origin}/confirm`, 
       },
     });
@@ -203,7 +194,6 @@ const handleGoogleRegister = async () => {
     errorMsg.value = error.message;
     loading.value = false;
   }
-  // Tidak perlu set loading = false di finally
 };
 </script>
 

@@ -107,17 +107,15 @@ useHead({
   title: "Login",
 });
 
-// 1. Ambil klien Supabase dan Router Nuxt
 const supabase = useSupabaseClient();
 const router = useRouter();
 
-// 2. State management
 const email = ref("");
 const password = ref("");
 const loading = ref(false);
 const errorMsg = ref<string | null>(null);
 
-// 3. Fungsi Login Email/Password
+// Fungsi Login Email/Password
 const handleLogin = async () => {
   loading.value = true;
   errorMsg.value = null;
@@ -128,8 +126,8 @@ const handleLogin = async () => {
     });
     if (error) throw error;
     
-    // Redirect ke halaman utama/dashboard setelah login berhasil
-    router.push("/"); 
+    // REDIRECT KE DASHBOARD setelah login berhasil
+    router.push("/dashboard"); 
   } catch (error: any) {
     errorMsg.value = error.message;
   } finally {
@@ -137,7 +135,7 @@ const handleLogin = async () => {
   }
 };
 
-// 4. Fungsi Login Google SSO
+// Fungsi Login Google SSO
 const handleGoogleLogin = async () => {
   loading.value = true;
   errorMsg.value = null;
@@ -147,17 +145,15 @@ const handleGoogleLogin = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        // Redirect ke halaman '/confirm' setelah otentikasi Google
-        // Ini harus sesuai dengan nuxt.config.ts dan Supabase Dashboard
+        // Menggunakan /confirm sebagai callback Supabase, Nuxt akan menangani redirect final ke /dashboard
         redirectTo: `${origin}/confirm`, 
       },
     });
     if (error) throw error;
   } catch (error: any) {
     errorMsg.value = error.message;
-    loading.value = false; // Set loading kembali jika ada error sebelum redirect
+    loading.value = false;
   }
-  // Tidak perlu set loading = false di finally karena pengguna akan di-redirect
 };
 </script>
 
