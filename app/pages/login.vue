@@ -61,7 +61,7 @@
             />
           </div>
 
-          <div class="mb-6">
+          <div class="mb-2">
             <label
               for="password"
               class="block text-sm font-medium text-slate-300 mb-2"
@@ -75,6 +75,15 @@
               placeholder="••••••••"
               required
             />
+          </div>
+          
+          <div class="text-right mb-6">
+            <NuxtLink
+              to="/forgot-password"
+              class="text-sm font-medium text-slate-400 hover:text-cyan-400"
+            >
+              Lupa Password?
+            </NuxtLink>
           </div>
 
           <button

@@ -15,7 +15,7 @@ export default defineNuxtConfig({
   modules: [
     '@nuxtjs/supabase',
   ],
-  
+
   // ✅ Properti 'supabase' yang menyebabkan error
   supabase: {
     redirectOptions: {
@@ -23,9 +23,9 @@ export default defineNuxtConfig({
       callback: '/confirm', // Halaman callback (tidak perlu dikecualikan, tapi kita tambahkan untuk keamanan)
 
       home: '/dashboard',
-      
+
       // ✅ PERBAIKAN: Tambahkan '/' ke daftar exclude
-      exclude: ['/', '/register', '/confirm'], // Halaman yang TIDAK memerlukan autentikasi
+      exclude: ['/', '/register', '/confirm', '/forgot-password', '/update-password'], // Halaman yang TIDAK memerlukan autentikasi
     }
   }
 })
