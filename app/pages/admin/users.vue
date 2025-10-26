@@ -20,7 +20,7 @@
     <div v-else-if="error" class="error-panel card p-6 rounded-lg text-center bg-red-900/30 border border-red-700">
       <h2 class="text-xl font-bold text-red-400 mb-2">Gagal Memuat Data Pengguna</h2>
       <p class="text-red-300">Terjadi kesalahan saat mengambil data. Silakan coba lagi.</p>
-      <p v-if="error.message" class="text-sm text-red-500 mt-2">Detail Error: {{ error.message }}</p>
+      <p v-if="error" class="text-sm text-red-500 mt-2">Detail Error: {{ error.statusMessage || error.message || error }}</p>
     </div>
 
     <div v-else class="card rounded-lg overflow-hidden">
@@ -71,8 +71,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-// Import composable HANYA yang diperlukan di top-level (client & server)
-// Composable server akan diimpor DI DALAM useAsyncData
+// Import composables Nuxt yang aman untuk client & server
 import { useAsyncData, definePageMeta, useHead, useRuntimeConfig, createError, useRequestEvent } from '#app';
 
 // Tipe DetailedUser (tetap sama)
@@ -108,79 +107,92 @@ useHead({
 const searchQuery = ref('');
 
 // ----------------------------------------------------
-// Data Fetching Menggunakan useAsyncData (Server-Side)
+// Data Fetching Menggunakan useAsyncData
 // ----------------------------------------------------
 const { data: users, pending, error } = await useAsyncData<DetailedUser[]>('adminUsers', async () => {
-    // PERBAIKAN: Import composable server DI DALAM factory function
-    const { serverSupabaseClient, serverSupabaseUser } = await import('#supabase/server');
+    // Gunakan process.server untuk memastikan kode ini HANYA berjalan di server
+    if (process.server) {
+        // Import composable server HANYA di dalam blok process.server
+        const { serverSupabaseClient, serverSupabaseUser } = await import('#supabase/server');
 
-    const event = useRequestEvent();
-    if (!event) {
-        console.error("useRequestEvent returned undefined. Cannot run server-side logic.");
-        throw createError({ statusCode: 500, statusMessage: 'Server context not available.' });
+        const event = useRequestEvent();
+        if (!event) {
+            console.error("useRequestEvent returned undefined on server.");
+            throw createError({ statusCode: 500, statusMessage: 'Server context error.' });
+        }
+        const config = useRuntimeConfig(event);
+        const adminEmail = config.public.adminEmail;
+        const serviceKey = config.supabaseServiceKey; // Ambil service key dari runtime config
+
+        // 1. Validasi Service Key
+        if (!serviceKey) {
+             console.error("SUPABASE_SERVICE_KEY is not configured in runtimeConfig.");
+             throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Service key missing.' });
+        }
+
+        // 2. Verifikasi admin
+        const currentUser = await serverSupabaseUser(event);
+        if (!currentUser || currentUser.email !== adminEmail) {
+            throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
+        }
+
+        // 3. Buat admin client
+        const adminClient = await serverSupabaseClient(event, { supabaseKey: serviceKey });
+        if (!adminClient) {
+             throw createError({ statusCode: 500, statusMessage: 'Failed to create Supabase admin client.' });
+        }
+
+        // 4. Ambil daftar pengguna
+        const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({});
+
+        if (listError) {
+            console.error("Server-side Error listing users:", listError);
+            throw createError({ statusCode: 500, statusMessage: `Failed to list users: ${listError.message}` });
+        }
+        if (!userData || !userData.users) return [];
+
+        // --- Logika Join Profile & Organisasi ---
+        const userIds = userData.users.map(u => u.id);
+        if (userIds.length === 0) return [];
+
+        // Ambil profiles
+        const { data: profiles, error: profileError } = await adminClient
+            .from('profiles')
+            .select('user_id, full_name, current_organization_id')
+            .in('user_id', userIds);
+        if (profileError) console.error("Server-side Error fetching profiles:", profileError); // Lanjutkan meski error
+
+        // Ambil organizations
+        const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
+        let organizationsMap: Map<number, { name?: string }> = new Map();
+        if (organizationIds.length > 0) {
+            const { data: organizations, error: orgError } = await adminClient
+                .from('organizations')
+                .select('id, name')
+                .in('id', organizationIds);
+            if (orgError) console.error("Server-side Error fetching organizations:", orgError); // Lanjutkan meski error
+            else if (organizations) organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
+        }
+
+        // Gabungkan data
+        const detailedUsers: DetailedUser[] = userData.users.map(user => {
+            const profile = profiles?.find(p => p.user_id === user.id) || null;
+            const organization = profile?.current_organization_id ? organizationsMap.get(profile.current_organization_id) || null : null;
+            return {
+                id: user.id, email: user.email, created_at: user.created_at, email_confirmed_at: user.email_confirmed_at,
+                profile: profile ? { full_name: profile.full_name, current_organization_id: profile.current_organization_id, organization: organization } : null,
+            };
+        });
+        // --- Akhir Logika Join ---
+
+        return detailedUsers;
+    } else {
+        // Jika kode ini (secara tak terduga) berjalan di klien, kembalikan array kosong
+        // atau lempar error, karena kita tidak bisa memanggil API admin dari klien.
+        console.warn("Attempted to run admin user fetch logic on the client side. Returning empty array.");
+        return [];
+        // Atau: throw createError({ statusCode: 500, statusMessage: 'Admin data fetching attempted on client.' });
     }
-    const config = useRuntimeConfig(event);
-    const adminEmail = config.public.adminEmail;
-
-    // 1. Verifikasi pengguna saat ini adalah admin
-    const currentUser = await serverSupabaseUser(event);
-    if (!currentUser || currentUser.email !== adminEmail) {
-        throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
-    }
-
-    // 2. Buat admin client Supabase MENGGUNAKAN SERVICE KEY
-    const adminClient = await serverSupabaseClient(event, { supabaseKey: config.supabaseServiceKey });
-    if (!adminClient) {
-        throw createError({ statusCode: 500, statusMessage: 'Supabase admin client not initialized.' });
-    }
-
-    // 3. Ambil daftar pengguna
-    const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({ });
-
-    if (listError) {
-        console.error("Server-side Error listing users:", listError);
-        throw createError({ statusCode: 500, statusMessage: `Failed to list users: ${listError.message}` });
-    }
-    if (!userData || !userData.users) return [];
-
-    // --- Logika Join Profile & Organisasi ---
-    const userIds = userData.users.map(u => u.id);
-    if (userIds.length === 0) return [];
-
-    const { data: profiles, error: profileError } = await adminClient
-        .from('profiles')
-        .select('user_id, full_name, current_organization_id')
-        .in('user_id', userIds);
-
-    if (profileError) console.error("Server-side Error fetching profiles:", profileError);
-
-    const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
-    let organizationsMap: Map<number, { name?: string }> = new Map();
-
-    if (organizationIds.length > 0) {
-        const { data: organizations, error: orgError } = await adminClient
-            .from('organizations')
-            .select('id, name')
-            .in('id', organizationIds);
-
-        if (orgError) console.error("Server-side Error fetching organizations:", orgError);
-        else if (organizations) organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
-    }
-
-    // Gabungkan data
-    const detailedUsers: DetailedUser[] = userData.users.map(user => {
-        const profile = profiles?.find(p => p.user_id === user.id) || null;
-        const organization = profile?.current_organization_id
-            ? organizationsMap.get(profile.current_organization_id) || null
-            : null;
-        return {
-            id: user.id, email: user.email, created_at: user.created_at, email_confirmed_at: user.email_confirmed_at,
-            profile: profile ? { full_name: profile.full_name, current_organization_id: profile.current_organization_id, organization: organization } : null,
-        };
-    });
-    // --- Akhir Logika Join ---
-
-    return detailedUsers;
 }, {
     default: () => [] // Nilai default
 });
