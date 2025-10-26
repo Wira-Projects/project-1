@@ -27,6 +27,7 @@ interface DebugInfo {
     accessGranted?: boolean;
     errorMessage?: string;
     step?: string; // Menunjukkan langkah terakhir yang berhasil atau gagal
+    receivedCookieHeader?: string | null; // Tambahkan field untuk header cookie
 }
 
 // Tipe respons gabungan
@@ -53,10 +54,19 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         serviceKeyPresent: false,
         serverUserEmail: null,
         accessGranted: false,
-        step: 'Initializing'
+        errorMessage: undefined, // Inisialisasi errorMessage
+        step: 'Initializing',
+        receivedCookieHeader: null, // Inisialisasi header cookie
     };
 
     try {
+        // --- TAMBAHAN DEBUG: Log header cookie ---
+        debugInfo.step = 'Reading request headers';
+        // Akses header 'cookie' dari request Node.js asli
+        debugInfo.receivedCookieHeader = event.node.req.headers['cookie'] || null;
+        console.log('API Route: Received Cookie Header:', debugInfo.receivedCookieHeader); // Log juga di server
+        // --- AKHIR TAMBAHAN DEBUG ---
+
         debugInfo.step = 'Reading runtime config';
         const config = useRuntimeConfig(event);
         debugInfo.expectedAdminEmail = config.public.adminEmail || null;
@@ -88,7 +98,8 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
 
         if (!currentUser || currentUser.email !== debugInfo.expectedAdminEmail) {
             debugInfo.step = 'Error: Access denied';
-            debugInfo.errorMessage = `Access Denied. User: ${debugInfo.serverUserEmail || 'unauthenticated'}, Expected Admin: ${debugInfo.expectedAdminEmail}`;
+            // Perbarui errorMessage dengan informasi yang relevan
+            debugInfo.errorMessage = `Access Denied. User: ${debugInfo.serverUserEmail || 'unauthenticated'}, Expected Admin: ${debugInfo.expectedAdminEmail || 'Not Set'}`;
             console.warn('API Route:', debugInfo.errorMessage);
             // Kembalikan objek error dengan debug info
             return {
@@ -126,6 +137,7 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         }
         if (!userData || !userData.users) {
             debugInfo.step = 'Completed: No users found';
+            console.log('API Route: No users found or userData is null.'); // Tambah log
             return { users: [], debug: debugInfo };
         }
 
@@ -133,6 +145,7 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         const userIds = userData.users.map(u => u.id);
         if (userIds.length === 0) {
             debugInfo.step = 'Completed: User list empty, skipped profile fetch';
+             console.log('API Route: User list is empty, skipping profile/org fetch.'); // Tambah log
             return { users: [], debug: debugInfo };
         }
 
@@ -144,9 +157,11 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
             if (error) throw error;
             profiles = data;
         } catch (profileError: any) {
-            debugInfo.step = 'Warning: Error fetching profiles, continuing...';
-            debugInfo.errorMessage = `Error fetching profiles: ${profileError.message}`;
-            console.warn("API Route Warning:", debugInfo.errorMessage);
+            // Catat error di debugInfo tapi jangan hentikan proses
+            const profileErrorMessage = `Error fetching profiles: ${profileError.message}`;
+            debugInfo.errorMessage = debugInfo.errorMessage ? `${debugInfo.errorMessage}; ${profileErrorMessage}` : profileErrorMessage;
+            console.warn("API Route Warning:", profileErrorMessage);
+             debugInfo.step = 'Warning: Error fetching profiles, continuing...'; // Update step
         }
 
         debugInfo.step = 'Fetching organizations';
@@ -161,10 +176,14 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
                     organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
                 }
             } catch (orgError: any) {
-                debugInfo.step = 'Warning: Error fetching organizations, continuing...';
-                debugInfo.errorMessage = `Error fetching organizations: ${orgError.message}`;
-                console.warn("API Route Warning:", debugInfo.errorMessage);
+                 // Catat error di debugInfo tapi jangan hentikan proses
+                const orgErrorMessage = `Error fetching organizations: ${orgError.message}`;
+                debugInfo.errorMessage = debugInfo.errorMessage ? `${debugInfo.errorMessage}; ${orgErrorMessage}` : orgErrorMessage;
+                console.warn("API Route Warning:", orgErrorMessage);
+                debugInfo.step = 'Warning: Error fetching organizations, continuing...'; // Update step
             }
+        } else {
+             debugInfo.step = 'Skipped fetching organizations (no IDs found)';
         }
 
         // Combine Data
@@ -178,19 +197,25 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
             };
         });
 
-        debugInfo.step = `Completed: Successfully fetched ${detailedUsers.length} users.`;
+        debugInfo.step = `Completed: Successfully processed ${detailedUsers.length} users.`;
+         console.log(`API Route: Successfully processed ${detailedUsers.length} users.`); // Tambah log
+        // Hapus errorMessage jika tidak ada error fatal
+        if (debugInfo.step.startsWith('Completed') || debugInfo.step.startsWith('Warning')) {
+            // Biarkan errorMessage jika ada warning sebelumnya
+        }
+
         return { users: detailedUsers, debug: debugInfo };
 
     } catch (error: any) {
         // Tangkap error tak terduga
         debugInfo.step = 'Error: Unhandled exception';
         debugInfo.errorMessage = error.message || 'Internal Server Error in API route.';
-        console.error('API Route Error:', error);
+        console.error('API Route Unhandled Error:', error);
         // Kembalikan objek error dengan debug info
         const h3Error = createError({ statusCode: error.statusCode || 500, statusMessage: debugInfo.errorMessage, data: error.data });
         return {
             error: h3Error.toJSON(),
-            debug: debugInfo
+            debug: debugInfo // Pastikan debugInfo dikembalikan di sini juga
         };
     }
 });
