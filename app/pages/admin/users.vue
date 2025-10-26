@@ -20,7 +20,7 @@
     <div v-else-if="error" class="error-panel card p-6 rounded-lg text-center bg-red-900/30 border border-red-700">
       <h2 class="text-xl font-bold text-red-400 mb-2">Gagal Memuat Data Pengguna</h2>
       <p class="text-red-300">Terjadi kesalahan saat mengambil data. Silakan coba lagi.</p>
-      <p v-if="error" class="text-sm text-red-500 mt-2">Detail Error: {{ error.statusMessage || error.message || error }}</p>
+      <p v-if="error" class="text-sm text-red-500 mt-2">Detail Error: {{ error.statusMessage || error.message || error.toString() }}</p>
     </div>
 
     <div v-else class="card rounded-lg overflow-hidden">
@@ -94,11 +94,8 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-// Import composables Nuxt yang aman untuk client & server
-// Auto-import seharusnya menangani ini: useAsyncData, definePageMeta, useHead, useRuntimeConfig, createError, useRequestEvent, useNuxtApp
-// Hapus import manual jika tidak diperlukan lagi berkat auto-imports
-// import { useAsyncData, definePageMeta, useHead, useRuntimeConfig, createError, useRequestEvent, useNuxtApp } from '#app';
-
+// Auto-imports akan menangani useAsyncData, definePageMeta, useHead, useNuxtApp
+// Import #imports hanya di dalam blok if (process.server)
 
 // Tipe DetailedUser (tetap sama)
 interface DetailedUser {
@@ -115,9 +112,7 @@ interface DetailedUser {
     } | null;
 }
 
-// ----------------------------------------------------
 // Meta Halaman & Middleware (tetap sama)
-// ----------------------------------------------------
 definePageMeta({
   layout: 'admin',
   middleware: 'admin-auth'
@@ -127,25 +122,20 @@ useHead({
   title: 'Manajemen Pengguna',
 });
 
-// ----------------------------------------------------
 // State (tetap sama)
-// ----------------------------------------------------
 const searchQuery = ref('');
 const userToSuspend = ref<DetailedUser | null>(null);
 const suspending = ref(false);
 const suspendError = ref<string | null>(null);
 
-// ----------------------------------------------------
 // Data Fetching Menggunakan useAsyncData (PERBAIKAN DI SINI)
-// ----------------------------------------------------
 const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser[]>('adminUsers', async () => {
     // Jalankan logika server HANYA jika process.server true
     if (process.server) {
-        // TIDAK PERLU IMPORT MANUAL '#supabase/server'
-        // const { serverSupabaseClient, serverSupabaseUser } = await import('#supabase/server');
+        // Impor composables server secara eksplisit MENGGUNAKAN #imports
+        const { useRequestEvent, useRuntimeConfig, createError, serverSupabaseUser, serverSupabaseClient } = await import('#imports');
 
-        // Gunakan composables yang tersedia otomatis di konteks server
-        const event = useRequestEvent(); // Harus ada di server
+        const event = useRequestEvent();
         const config = useRuntimeConfig();
         const adminEmail = config.public.adminEmail;
         const serviceKey = config.supabaseServiceKey;
@@ -153,7 +143,7 @@ const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser
         if (!event) throw createError({ statusCode: 500, statusMessage: 'Server context error.' });
         if (!serviceKey) throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Service key missing.' });
 
-        // Composables ini akan tersedia secara otomatis
+        // Gunakan composables yang sudah diimpor
         const currentUser = await serverSupabaseUser(event);
         if (!currentUser || currentUser.email !== adminEmail) {
             throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
@@ -198,8 +188,8 @@ const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser
         return detailedUsers;
 
     } else {
-        // Client-side: (logika fallback tetap sama)
-        console.warn("useAsyncData factory running on client for adminUsers. Trying to use SSR payload.");
+        // Client-side: Logika fallback tetap sama
+        // console.warn("useAsyncData factory running on client for adminUsers. Trying to use SSR payload."); // Bisa dihapus jika tidak perlu
         const nuxtApp = useNuxtApp();
         const ssrData = nuxtApp.payload.data['adminUsers'];
         return (ssrData || []) as DetailedUser[];
@@ -209,9 +199,7 @@ const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser
 });
 
 
-// ----------------------------------------------------
 // Filtering (Client-Side) (tetap sama)
-// ----------------------------------------------------
 const filteredUsers = computed((): DetailedUser[] => {
     const userList = Array.isArray(users.value) ? users.value : [];
     if (!searchQuery.value) return userList;
@@ -222,9 +210,7 @@ const filteredUsers = computed((): DetailedUser[] => {
     );
 });
 
-// ----------------------------------------------------
 // Actions (Client-Side methods calling server logic via API/RPC needed) (tetap sama)
-// ----------------------------------------------------
 const editUser = (userId: string) => {
     alert(`TODO: Implement edit functionality for user ID: ${userId}`);
     // navigateTo(`/admin/users/${userId}/edit`);
@@ -243,26 +229,22 @@ const suspendUser = async () => {
     try {
         console.warn("Delete action requires a server API route to call deleteUserServer securely.");
 
-        // ---- INI BAGIAN YANG PERLU ANDA BUAT ----
-        // Buat file server/api/admin/users/[id].delete.ts
-        // Panggil API route tersebut menggunakan $fetch
+        // ---- PASTIKAN ANDA SUDAH MEMBUAT API ROUTE INI ----
         const userIdToDelete = userToSuspend.value.id;
+        // Panggil API route (contoh, sesuaikan path jika perlu)
         const response = await $fetch(`/api/admin/users/${userIdToDelete}`, {
             method: 'DELETE',
-            // Tambahkan header otentikasi jika diperlukan oleh API route Anda
         });
+        // ---------------------------------------------------
 
-        // Contoh penanganan respons (sesuaikan dengan API route Anda)
-        if (response.success) {
+        if (response.success) { // Sesuaikan dengan struktur respons API Anda
             console.log(`User ${userIdToDelete} successfully deleted.`);
-            userToSuspend.value = null; // Tutup modal
+            userToSuspend.value = null;
             await refresh(); // Refresh daftar pengguna
              alert(`Pengguna ${userIdToDelete} berhasil dihapus.`);
         } else {
             throw new Error(response.error || 'Gagal menghapus pengguna dari server.');
         }
-        // ---- AKHIR BAGIAN YANG PERLU ANDA BUAT ----
-
 
     } catch (err: any) {
         console.error("Error deleting user:", err);
@@ -274,9 +256,7 @@ const suspendUser = async () => {
     }
 };
 
-// ----------------------------------------------------
 // Utility Functions (Client-Side) (tetap sama)
-// ----------------------------------------------------
 const formatDate = (dateString: string | undefined): string => {
     if (!dateString) return '-';
     try { return new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
