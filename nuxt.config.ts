@@ -27,5 +27,11 @@ export default defineNuxtConfig({
       // ✅ PERBAIKAN: Tambahkan '/' ke daftar exclude
       exclude: ['/', '/register', '/confirm', '/forgot-password', '/update-password'], // Halaman yang TIDAK memerlukan autentikasi
     }
-  }
+  },
+
+  runtimeConfig: {
+    public: {
+      adminEmail: process.env.ADMIN_EMAIL || 'admin@example.com' // Default fallback jika tidak ada
+    }
+  },
 })
