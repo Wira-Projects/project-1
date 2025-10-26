@@ -10,4 +10,18 @@ export default defineNuxtConfig({
       tailwindcss(),
     ],
   },
+
+  // Daftar modul sudah benar
+  modules: [
+    '@nuxtjs/supabase',
+  ],
+  
+  // ✅ Properti 'supabase' yang menyebabkan error
+  supabase: {
+    redirectOptions: {
+      login: '/login', // Halaman login
+      callback: '/confirm', // Halaman callback setelah login (penting untuk SSO)
+      exclude: ['/register'], // Halaman yang tidak perlu autentikasi
+    }
+  }
 })
