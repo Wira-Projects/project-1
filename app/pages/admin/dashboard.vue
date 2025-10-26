@@ -96,7 +96,6 @@ definePageMeta({
 // ----------------------------------------------------
 const supabase = useSupabaseClient();
 
-// Fungsi untuk mengambil semua data yang dibutuhkan
 const fetchAdminData = async () => {
     // A. Ambil Data Statistik (Count)
     const [
@@ -107,24 +106,32 @@ const fetchAdminData = async () => {
         topUpOrdersRes,
         aiUsageLogsRes
     ] = await Promise.all([
-        // Total Pengguna
-        supabase.from('users').select('*', { count: 'exact', head: true }),
-        // Total Organisasi
+        
+        // 1. Total Pengguna (Ambil dari auth.users)
+        // KEBUTUHAN RLS: Membutuhkan RLS Policy yang mengizinkan Admin untuk SELECT count() dari tabel auth.users
+        supabase.from('users') // Mengarah ke tabel 'users' di skema 'auth'
+            .select('*', { count: 'exact', head: true, schema: 'auth' }),
+            
+        // 2. Total Organisasi (Ambil dari tabel organizations Anda)
+        // KEBUTUHAN RLS: Membutuhkan RLS Policy yang mengizinkan Admin untuk SELECT count() dari tabel public.organizations
         supabase.from('organizations').select('*', { count: 'exact', head: true }),
-        // VPS Aktif ('running')
+        
+        // 3. VPS Aktif
         supabase.from('vps_instances').select('*', { count: 'exact', head: true }).eq('status', 'running'),
-        // Pendapatan Bulan Ini (Asumsi: Total amount dari invoices yang statusnya 'paid' bulan ini)
-        // NOTE: Supabase RLS perlu diatur untuk admin agar bisa mengakses tabel invoices
+        
+        // 4. Pendapatan Bulan Ini (dari invoices)
         supabase.from('invoices')
             .select('amount')
             .eq('status', 'paid')
-            .gte('issued_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()), // Mulai dari tanggal 1 bulan ini
-        // Pesanan Top Up Terbaru (JOIN organizations untuk menampilkan nama)
+            .gte('issued_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()), 
+
+        // 5. Pesanan Top Up Terbaru
         supabase.from('top_up_orders')
             .select('*, organizations(name)')
             .order('created_at', { ascending: false })
             .limit(5),
-        // Log Penggunaan AI Terakhir (JOIN marketplace_models untuk nama model)
+            
+        // 6. Log Penggunaan AI Terakhir
         supabase.from('gateway_usage_logs')
             .select('*, marketplace_models(display_name)')
             .order('timestamp', { ascending: false })
@@ -139,7 +146,8 @@ const fetchAdminData = async () => {
     // C. Return Data yang Sudah Terstruktur
     return {
         stats: {
-            user_count: userCountRes.count || 0,
+            // NOTE: userCountRes.count hanya berfungsi jika RLS Auth diizinkan
+            user_count: userCountRes.count || 0, 
             org_count: orgCountRes.count || 0,
             vps_active_count: vpsActiveCountRes.count || 0,
             monthly_revenue: monthlyRevenueTotal,
@@ -158,15 +166,13 @@ const topUpOrders = computed(() => data.value?.top_up_orders || []);
 const aiUsageLogs = computed(() => data.value?.ai_usage_logs || []);
 
 // ----------------------------------------------------
-// 3. Fungsi Utility untuk Formatting
+// 3. Fungsi Utility untuk Formatting (Tetap dipertahankan)
 // ----------------------------------------------------
 
-// Format angka biasa
 const formatNumber = (num) => {
     return new Intl.NumberFormat('id-ID').format(num);
 };
 
-// Format Rupiah
 const formatRupiah = (amount) => {
     return new Intl.NumberFormat('id-ID', {
         style: 'currency',
@@ -175,13 +181,10 @@ const formatRupiah = (amount) => {
     }).format(amount);
 };
 
-// Format Tanggal/Waktu Sederhana
 const formatDate = (dateString) => {
-    // Di real project, gunakan library. Untuk demo, kita buat sederhana:
     return new Date(dateString).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 };
 
-// Menentukan kelas CSS untuk status top-up
 const getStatusClasses = (status) => {
   switch (status) {
     case 'successful':
@@ -197,14 +200,13 @@ const getStatusClasses = (status) => {
 };
 
 // ----------------------------------------------------
-// 4. Styling Kustom (Dipertahankan dari permintaan sebelumnya)
+// 4. Styling Kustom (Tetap dipertahankan)
 // ----------------------------------------------------
 useHead({
   style: [
     {
       children: `
         .card { background-color: #1e293b; border: 1px solid #334155; }
-        /* Menggunakan notasi yang di-escape untuk Tailwind CSS */
         .bg-green-500\\/30 { background-color: rgba(34, 197, 94, 0.3); }
         .bg-yellow-500\\/30 { background-color: rgba(245, 158, 11, 0.3); }
         .bg-red-500\\/30 { background-color: rgba(239, 68, 68, 0.3); }
