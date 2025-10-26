@@ -125,29 +125,29 @@ const fetchAdminData = async () => {
     aiUsageLogsRes
   ] = await Promise.all([
 
-    // 1. Total Pengguna
+    // 1. Total Pengguna (✅ PERBAIKAN: Mengambil dari schema 'auth')
     supabase.from('users')
       .select('*', { count: 'exact', head: true, schema: 'auth' }),
 
-    // 2. Total Organisasi 
+    // 2. Total Organisasi (Tetap sama, diasumsikan di schema 'public')
     supabase.from('organizations').select('*', { count: 'exact', head: true }),
 
-    // 3. VPS Aktif
+    // 3. VPS Aktif (Tetap sama, diasumsikan di schema 'public')
     supabase.from('vps_instances').select('*', { count: 'exact', head: true }).eq('status', 'running'),
 
-    // 4. Pendapatan Bulan Ini (dari invoices)
+    // 4. Pendapatan Bulan Ini (dari invoices - Tetap sama, diasumsikan di schema 'public')
     supabase.from('invoices')
       .select('amount')
       .eq('status', 'paid')
       .gte('issued_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
 
-    // 5. Pesanan Top Up Terbaru
+    // 5. Pesanan Top Up Terbaru (Tetap sama, diasumsikan di schema 'public')
     supabase.from('top_up_orders')
       .select('*, organizations(name)')
       .order('created_at', { ascending: false })
       .limit(5),
 
-    // 6. Log Penggunaan AI Terakhir
+    // 6. Log Penggunaan AI Terakhir (Tetap sama, diasumsikan di schema 'public')
     supabase.from('gateway_usage_logs')
       .select('*, marketplace_models(display_name)')
       .order('timestamp', { ascending: false })
@@ -166,7 +166,7 @@ const fetchAdminData = async () => {
   // C. Return Data yang Sudah Terstruktur
   return {
     stats: {
-      user_count: userCountRes.count || 0,
+      user_count: userCountRes.count || 0, // Menggunakan count dari userCountRes
       org_count: orgCountRes.count || 0,
       vps_active_count: vpsActiveCountRes.count || 0,
       monthly_revenue: monthlyRevenueTotal,
@@ -186,7 +186,7 @@ const topUpOrders = computed(() => data.value?.top_up_orders || []);
 const aiUsageLogs = computed(() => data.value?.ai_usage_logs || []);
 
 // ----------------------------------------------------
-// 3. Fungsi Utility untuk Formatting 
+// 3. Fungsi Utility untuk Formatting
 // ----------------------------------------------------
 
 const formatNumber = (num) => {
