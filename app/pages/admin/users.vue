@@ -20,7 +20,7 @@
     <div v-else-if="error" class="error-panel card p-6 rounded-lg text-center bg-red-900/30 border border-red-700">
       <h2 class="text-xl font-bold text-red-400 mb-2">Gagal Memuat Data Pengguna</h2>
       <p class="text-red-300">Terjadi kesalahan saat mengambil data. Silakan coba lagi.</p>
-      <p v-if="error" class="text-sm text-red-500 mt-2">Detail Error: {{ error.statusMessage || error.message || error.toString() }}</p>
+      <p v-if="error" class="text-sm text-red-500 mt-2">Detail Error: {{ error.data?.message || error.statusMessage || error.message || error.toString() }}</p>
     </div>
 
     <div v-else class="card rounded-lg overflow-hidden">
@@ -73,7 +73,7 @@
                 <i class="fas fa-triangle-exclamation mr-3"></i> Konfirmasi Suspend
             </h3>
             <p class="text-slate-300 mb-6">
-                Apakah Anda yakin ingin men-suspend pengguna <strong class="text-white">{{ userToSuspend.email }}</strong>? Ini akan menghapus pengguna secara permanen.
+                Apakah Anda yakin ingin menghapus pengguna <strong class="text-white">{{ userToSuspend.email }}</strong> secara permanen? Tindakan ini tidak dapat dibatalkan.
             </p>
             <div class="flex justify-end space-x-3">
                 <button @click="userToSuspend = null" class="py-2 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 font-medium transition">
@@ -94,8 +94,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-// Auto-imports akan menangani useAsyncData, definePageMeta, useHead, useNuxtApp
-// Import #imports hanya di dalam blok if (process.server)
+// Auto-imports should handle useAsyncData, definePageMeta, useHead, useNuxtApp, $fetch
 
 // Tipe DetailedUser (tetap sama)
 interface DetailedUser {
@@ -128,76 +127,14 @@ const userToSuspend = ref<DetailedUser | null>(null);
 const suspending = ref(false);
 const suspendError = ref<string | null>(null);
 
-// Data Fetching Menggunakan useAsyncData (PERBAIKAN DI SINI)
-const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser[]>('adminUsers', async () => {
-    // Jalankan logika server HANYA jika process.server true
-    if (process.server) {
-        // Impor composables server secara eksplisit MENGGUNAKAN #imports
-        const { useRequestEvent, useRuntimeConfig, createError, serverSupabaseUser, serverSupabaseClient } = await import('#imports');
-
-        const event = useRequestEvent();
-        const config = useRuntimeConfig();
-        const adminEmail = config.public.adminEmail;
-        const serviceKey = config.supabaseServiceKey;
-
-        if (!event) throw createError({ statusCode: 500, statusMessage: 'Server context error.' });
-        if (!serviceKey) throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Service key missing.' });
-
-        // Gunakan composables yang sudah diimpor
-        const currentUser = await serverSupabaseUser(event);
-        if (!currentUser || currentUser.email !== adminEmail) {
-            throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
-        }
-
-        const adminClient = await serverSupabaseClient(event, { supabaseKey: serviceKey });
-        if (!adminClient) throw createError({ statusCode: 500, statusMessage: 'Failed to create Supabase admin client.' });
-
-        // Fetch users (logika selanjutnya tetap sama)
-        const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({});
-        if (listError) throw createError({ statusCode: 500, statusMessage: `Failed to list users: ${listError.message}` });
-        if (!userData || !userData.users) return [];
-
-        // Fetch profiles & organizations (logika join sama seperti sebelumnya)
-        const userIds = userData.users.map(u => u.id);
-        if (userIds.length === 0) return [];
-
-        const { data: profiles, error: profileError } = await adminClient
-            .from('profiles').select('user_id, full_name, current_organization_id').in('user_id', userIds);
-        if (profileError) console.error("Server Error fetching profiles:", profileError);
-
-        const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
-        let organizationsMap: Map<number, { name?: string }> = new Map();
-        if (organizationIds.length > 0) {
-            const { data: organizations, error: orgError } = await adminClient
-                .from('organizations').select('id, name').in('id', organizationIds);
-            if (orgError) console.error("Server Error fetching organizations:", orgError);
-            else if (organizations) organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
-        }
-
-        // Combine data (logika combine data tetap sama)
-        const detailedUsers: DetailedUser[] = userData.users.map(user => {
-            const profile = profiles?.find(p => p.user_id === user.id) || null;
-            const organization = profile?.current_organization_id ? organizationsMap.get(profile.current_organization_id) || null : null;
-            return {
-                id: user.id, email: user.email, created_at: user.created_at, email_confirmed_at: user.email_confirmed_at,
-                profile: profile ? { full_name: profile.full_name, current_organization_id: profile.current_organization_id, organization: organization } : null,
-            };
-        });
-
-        // Pastikan return di akhir blok if
-        return detailedUsers;
-
-    } else {
-        // Client-side: Logika fallback tetap sama
-        // console.warn("useAsyncData factory running on client for adminUsers. Trying to use SSR payload."); // Bisa dihapus jika tidak perlu
-        const nuxtApp = useNuxtApp();
-        const ssrData = nuxtApp.payload.data['adminUsers'];
-        return (ssrData || []) as DetailedUser[];
-    }
-}, {
-    default: () => [], // Nilai default penting
-});
-
+// ----------------------------------------------------
+// Data Fetching Menggunakan useAsyncData - Fetching from API route
+// ----------------------------------------------------
+const { data: users, pending, error, refresh } = await useAsyncData<DetailedUser[]>(
+  'adminUsers',
+  () => $fetch('/api/admin/users'), // Fetch dari API route baru
+  { default: () => [] } // Jaga nilai default
+);
 
 // Filtering (Client-Side) (tetap sama)
 const filteredUsers = computed((): DetailedUser[] => {
@@ -227,28 +164,31 @@ const suspendUser = async () => {
     suspending.value = true;
     suspendError.value = null;
     try {
-        console.warn("Delete action requires a server API route to call deleteUserServer securely.");
+        console.warn("Delete action requires a server API route: /api/admin/users/[id].delete.ts");
 
-        // ---- PASTIKAN ANDA SUDAH MEMBUAT API ROUTE INI ----
+        // ---- PASTIKAN ANDA SUDAH MEMBUAT API ROUTE DELETE ----
         const userIdToDelete = userToSuspend.value.id;
-        // Panggil API route (contoh, sesuaikan path jika perlu)
         const response = await $fetch(`/api/admin/users/${userIdToDelete}`, {
             method: 'DELETE',
         });
-        // ---------------------------------------------------
+        // -----------------------------------------------------
 
-        if (response.success) { // Sesuaikan dengan struktur respons API Anda
+        // Asumsikan respons memiliki properti 'success' atau 'error'
+        // @ts-ignore // Sementara abaikan type error jika struktur response belum pasti
+        if (response && response.success) {
             console.log(`User ${userIdToDelete} successfully deleted.`);
             userToSuspend.value = null;
             await refresh(); // Refresh daftar pengguna
-             alert(`Pengguna ${userIdToDelete} berhasil dihapus.`);
+            alert(`Pengguna ${userToSuspend.value?.email || userIdToDelete} berhasil dihapus.`);
         } else {
-            throw new Error(response.error || 'Gagal menghapus pengguna dari server.');
+             // @ts-ignore
+            throw new Error(response?.error || 'Gagal menghapus pengguna dari server.');
         }
 
     } catch (err: any) {
         console.error("Error deleting user:", err);
-        const message = err.data?.message || err.message || 'Terjadi kesalahan saat menghapus pengguna.';
+        // Coba dapatkan pesan error yang lebih spesifik dari $fetch
+        const message = err.data?.message || err.statusMessage || err.message || 'Terjadi kesalahan saat menghapus pengguna.';
         suspendError.value = message;
         alert(`Gagal menghapus pengguna: ${message}`);
     } finally {
