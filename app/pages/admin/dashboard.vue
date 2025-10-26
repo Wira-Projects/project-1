@@ -98,7 +98,8 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+// Gunakan import 'vue' jika Anda tidak menggunakan <script setup lang="ts">
+// import { computed } from 'vue';
 
 // ----------------------------------------------------
 // 1. Definisikan Meta Halaman dan Middleware
@@ -117,6 +118,7 @@ const fetchAdminData = async () => {
   // A. Ambil Data Statistik (Count)
   // Menggunakan Promise.all untuk mengambil semua data secara paralel
   const [
+    // Panggil fungsi RPC 'get_user_count' untuk mendapatkan jumlah pengguna
     userCountRes,
     orgCountRes,
     vpsActiveCountRes,
@@ -124,39 +126,32 @@ const fetchAdminData = async () => {
     topUpOrdersRes,
     aiUsageLogsRes
   ] = await Promise.all([
+    // ✅ PERBAIKAN: Memanggil fungsi database 'get_user_count' via RPC
+    supabase.rpc('get_user_count'),
 
-    // 1. Total Pengguna (✅ PERBAIKAN: Mengambil dari schema 'auth')
-    supabase.from('users')
-      .select('*', { count: 'exact', head: true, schema: 'auth' }),
-
-    // 2. Total Organisasi (Tetap sama, diasumsikan di schema 'public')
+    // Query lainnya tetap sama
     supabase.from('organizations').select('*', { count: 'exact', head: true }),
-
-    // 3. VPS Aktif (Tetap sama, diasumsikan di schema 'public')
     supabase.from('vps_instances').select('*', { count: 'exact', head: true }).eq('status', 'running'),
-
-    // 4. Pendapatan Bulan Ini (dari invoices - Tetap sama, diasumsikan di schema 'public')
     supabase.from('invoices')
       .select('amount')
       .eq('status', 'paid')
       .gte('issued_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
-
-    // 5. Pesanan Top Up Terbaru (Tetap sama, diasumsikan di schema 'public')
     supabase.from('top_up_orders')
       .select('*, organizations(name)')
       .order('created_at', { ascending: false })
       .limit(5),
-
-    // 6. Log Penggunaan AI Terakhir (Tetap sama, diasumsikan di schema 'public')
     supabase.from('gateway_usage_logs')
       .select('*, marketplace_models(display_name)')
       .order('timestamp', { ascending: false })
       .limit(5)
   ]);
 
-  // Lakukan pemeriksaan error di sini jika Anda ingin menangkap error Supabase secara spesifik
-  // Namun, jika ada error di salah satu promise, Promise.all akan melempar error,
-  // dan useAsyncData akan menangkapnya, yang merupakan perilaku yang kita inginkan.
+  // Handle potensi error dari pemanggilan RPC
+  if (userCountRes.error) {
+    console.error('Error fetching user count via RPC:', userCountRes.error);
+    // Lempar error agar ditangkap oleh useAsyncData
+    throw userCountRes.error;
+  }
 
   // B. Hitung Total Pendapatan
   const monthlyRevenueTotal = monthlyRevenueRes.data
@@ -166,7 +161,8 @@ const fetchAdminData = async () => {
   // C. Return Data yang Sudah Terstruktur
   return {
     stats: {
-      user_count: userCountRes.count || 0, // Menggunakan count dari userCountRes
+      // ✅ PERBAIKAN: Ambil jumlah pengguna dari data hasil RPC
+      user_count: userCountRes.data ?? 0, // Gunakan nullish coalescing untuk default 0 jika data null/undefined
       org_count: orgCountRes.count || 0,
       vps_active_count: vpsActiveCountRes.count || 0,
       monthly_revenue: monthlyRevenueTotal,
@@ -177,11 +173,10 @@ const fetchAdminData = async () => {
 };
 
 // Gunakan useAsyncData untuk menjalankan fungsi fetch dan menangani loading/error
-// Perhatikan bahwa variabel `error` akan otomatis terisi jika `fetchAdminData` gagal
 const { data, pending, error } = useAsyncData('adminDashboard', fetchAdminData);
 
-// Memecah data untuk digunakan di template
-const stats = computed(() => data.value?.stats || {});
+// Memecah data untuk digunakan di template (computed agar reaktif)
+const stats = computed(() => data.value?.stats || { user_count: 0, org_count: 0, vps_active_count: 0, monthly_revenue: 0 }); // Beri nilai default
 const topUpOrders = computed(() => data.value?.top_up_orders || []);
 const aiUsageLogs = computed(() => data.value?.ai_usage_logs || []);
 
@@ -190,10 +185,14 @@ const aiUsageLogs = computed(() => data.value?.ai_usage_logs || []);
 // ----------------------------------------------------
 
 const formatNumber = (num) => {
+    // Tambahkan pengecekan jika num null atau undefined
+    if (num === null || num === undefined) return '0';
   return new Intl.NumberFormat('id-ID').format(num);
 };
 
 const formatRupiah = (amount) => {
+    // Tambahkan pengecekan jika amount null atau undefined
+    if (amount === null || amount === undefined) return 'Rp 0';
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
@@ -202,6 +201,7 @@ const formatRupiah = (amount) => {
 };
 
 const formatDate = (dateString) => {
+  if (!dateString) return '-'; // Handle jika dateString null
   return new Date(dateString).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 };
 
@@ -220,8 +220,9 @@ const getStatusClasses = (status) => {
 };
 
 // ----------------------------------------------------
-// 4. Styling Kustom
+// 4. Styling Kustom (jika diperlukan, bisa dipindah ke CSS global)
 // ----------------------------------------------------
+// useHead bisa dihapus jika styling sudah ada di file CSS terpisah
 useHead({
   style: [
     {
@@ -230,11 +231,12 @@ useHead({
         .bg-green-500\\/30 { background-color: rgba(34, 197, 94, 0.3); }
         .bg-yellow-500\\/30 { background-color: rgba(245, 158, 11, 0.3); }
         .bg-red-500\\/30 { background-color: rgba(239, 68, 68, 0.3); }
-        .text-green-900 { color: #064e3b; }
-        .text-yellow-900 { color: #78350f; }
-        .text-red-900 { color: #7f1d1d; }
+        .text-green-400 { color: #4ade80; }
+        .text-yellow-400 { color: #facc15; }
+        .text-red-400 { color: #f87171; }
+        .text-slate-400 { color: #94a3b8; }
       `,
-      tagPriority: 'high'
+      tagPriority: 'high' // Pastikan style ini diterapkan
     }
   ]
 });
@@ -246,11 +248,25 @@ useHead({
   white-space: nowrap;
 }
 
-/* Style untuk panel error, menggunakan kelas yang sudah didefinisikan sebelumnya */
+/* Style untuk panel error */
 .error-panel {
-  background-color: #7f1d1d;
-  /* red-900/30 */
-  border-color: #f87171;
-  /* red-400 */
+  /* Anda bisa sesuaikan style error panelnya */
+  background-color: rgba(220, 38, 38, 0.2); /* bg-red-700/20 */
+  border-color: rgba(239, 68, 68, 0.5); /* border-red-500/50 */
 }
+.text-red-400 { color: #f87171; }
+.text-red-300 { color: #fca5a5; }
+.text-red-500 { color: #ef4444; }
+
+/* Tambahan: Pastikan text color default di scope ini sesuai */
+div {
+  color: #e2e8f0; /* text-slate-200 */
+}
+.text-slate-100 { color: #f1f5f9; }
+.text-slate-300 { color: #cbd5e1; }
+.text-slate-400 { color: #94a3b8; }
+.text-slate-500 { color: #64748b; }
+.border-slate-700 { border-color: #334155; }
+.border-slate-800 { border-color: #1e293b; }
+
 </style>
