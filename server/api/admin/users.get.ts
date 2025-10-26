@@ -1,6 +1,6 @@
 // server/api/admin/users.get.ts
 import { serverSupabaseUser, serverSupabaseClient } from '#supabase/server';
-import { createError, defineEventHandler, H3Event, readValidatedBody, getQuery } from 'h3'; // Import h3 utilities if needed later
+import { createError, defineEventHandler, H3Event, readValidatedBody, getQuery, useRuntimeConfig } from 'h3'; // Pastikan useRuntimeConfig diimpor dari h3 atau #imports
 
 // Definisikan tipe DetailedUser di sini atau impor dari file terpisah
 interface DetailedUser {
@@ -19,58 +19,81 @@ interface DetailedUser {
 
 export default defineEventHandler(async (event: H3Event): Promise<DetailedUser[]> => {
   // Gunakan useRuntimeConfig dalam konteks event handler
+  // Pastikan variabel ini ada di runtimeConfig nuxt.config.ts
   const config = useRuntimeConfig(event);
-  const adminEmail = config.public.adminEmail;
-  const serviceKey = config.supabaseServiceKey;
+  const adminEmail = config.public.adminEmail; // Ambil dari public runtime config
+  const serviceKey = config.supabaseServiceKey; // Ambil dari private runtime config (hanya server)
+
+  // -- LOGGING UNTUK DEBUGGING --
+  console.log('API Route: /api/admin/users.get.ts invoked.');
+  console.log('API Route: Expected Admin Email:', adminEmail);
+  // Hati-hati! Jangan log serviceKey di production
+  // console.log('API Route: Service Key Present:', !!serviceKey);
+  // --- AKHIR LOGGING ---
 
   if (!serviceKey) {
-    console.error('Server configuration error: Service key missing.');
-    throw createError({ statusCode: 500, statusMessage: 'Server configuration error.' });
+    console.error('API Route Error: Service key (supabaseServiceKey) is missing in server runtimeConfig.');
+    throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Service key missing.' });
   }
+  if (!adminEmail) {
+     console.error('API Route Error: Admin email (public.adminEmail) is missing in runtimeConfig.');
+     // Anda mungkin ingin throw error di sini juga, atau biarkan pemeriksaan user gagal
+     // throw createError({ statusCode: 500, statusMessage: 'Server configuration error: Admin email missing.' });
+  }
+
 
   // Dapatkan pengguna saat ini & validasi status admin
   const currentUser = await serverSupabaseUser(event);
+  // -- LOGGING UNTUK DEBUGGING --
+  console.log('API Route: Current User Email from serverSupabaseUser:', currentUser?.email || 'null/undefined');
+  // --- AKHIR LOGGING ---
+
   if (!currentUser || currentUser.email !== adminEmail) {
-    console.warn(`Admin access denied for user: ${currentUser?.email || 'unauthenticated'}`);
+    console.warn(`API Route: Access Denied. User: ${currentUser?.email || 'unauthenticated'}, Expected Admin: ${adminEmail}`);
     throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
   }
+
+  // -- LOGGING UNTUK DEBUGGING --
+  console.log('API Route: Admin access granted.');
+  // --- AKHIR LOGGING ---
 
   // Buat admin client
   const adminClient = await serverSupabaseClient(event, { supabaseKey: serviceKey });
   if (!adminClient) {
-    console.error('Failed to create Supabase admin client.');
+    console.error('API Route Error: Failed to create Supabase admin client.');
     throw createError({ statusCode: 500, statusMessage: 'Failed to create Supabase admin client.' });
   }
 
   try {
     // Fetch users
-    // Anda bisa menambahkan opsi pagination di sini jika diperlukan, misal:
-    // const { page = 1, perPage = 50 } = getQuery(event);
-    // const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({ page: +page, perPage: +perPage });
     const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({});
 
     if (listError) {
-      console.error('Failed to list users:', listError.message);
+      console.error('API Route Error: Failed to list users:', listError.message);
       throw createError({ statusCode: 500, statusMessage: `Failed to list users: ${listError.message}` });
     }
-    if (!userData || !userData.users) return [];
+    if (!userData || !userData.users) {
+        console.log('API Route: No users found or userData is null.');
+        return [];
+    }
 
     // Fetch profiles & organizations
     const userIds = userData.users.map(u => u.id);
-    if (userIds.length === 0) return [];
+    if (userIds.length === 0) {
+        console.log('API Route: User list is empty, skipping profile/org fetch.');
+        return [];
+    }
 
     const { data: profiles, error: profileError } = await adminClient
         .from('profiles').select('user_id, full_name, current_organization_id').in('user_id', userIds);
-    // Log error tapi jangan throw agar sebagian data tetap bisa ditampilkan jika profil gagal
-    if (profileError) console.error("API Error fetching profiles:", profileError.message);
+    if (profileError) console.error("API Route Warning: Error fetching profiles:", profileError.message); // Log sebagai warning
 
     const organizationIds = profiles?.map(p => p.current_organization_id).filter(id => id != null) as number[] || [];
     let organizationsMap: Map<number, { name?: string }> = new Map();
     if (organizationIds.length > 0) {
         const { data: organizations, error: orgError } = await adminClient
             .from('organizations').select('id, name').in('id', organizationIds);
-        // Log error tapi jangan throw
-        if (orgError) console.error("API Error fetching organizations:", orgError.message);
+        if (orgError) console.error("API Route Warning: Error fetching organizations:", orgError.message); // Log sebagai warning
         else if (organizations) organizationsMap = new Map(organizations.map(org => [org.id, { name: org.name }]));
     }
 
@@ -84,12 +107,12 @@ export default defineEventHandler(async (event: H3Event): Promise<DetailedUser[]
         };
     });
 
+    console.log(`API Route: Successfully fetched ${detailedUsers.length} users.`); // Log jumlah hasil
     return detailedUsers;
 
   } catch (error: any) {
-    console.error('Error in /api/admin/users:', error);
-    // Jika sudah H3Error, lempar lagi, jika tidak buat H3Error baru
-    if (error.statusCode) throw error;
-    throw createError({ statusCode: 500, statusMessage: 'Internal Server Error fetching users.' });
+    console.error('API Route Error in /api/admin/users:', error);
+    if (error.statusCode && error.statusMessage) throw error; // Re-throw H3Error
+    throw createError({ statusCode: 500, statusMessage: error.message || 'Internal Server Error fetching users.' });
   }
 });
