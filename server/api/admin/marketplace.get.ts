@@ -7,7 +7,6 @@ import { useRuntimeConfig } from '#imports'
 interface ApiProvider {
     id: number;
     name: string;
-    // Tambahkan field lain jika perlu ditampilkan di frontend
 }
 
 interface MarketplaceModel {
@@ -66,15 +65,17 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         debugInfo.step = 'Reading runtime config';
         const config = useRuntimeConfig(event);
         debugInfo.expectedAdminEmail = config.public.adminEmail || null;
-        if (!debugInfo.expectedAdminEmail) { /* ... error handling ... */
+        if (!debugInfo.expectedAdminEmail) {
              debugInfo.errorMessage = 'Server configuration error: Admin email missing.';
+             console.error('API Route Error:', debugInfo.errorMessage);
              return { error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(), debug: debugInfo };
         }
         debugInfo.step = 'Validating current user';
         const currentUser = await serverSupabaseUser(event);
         debugInfo.serverUserEmail = currentUser?.email || null;
-        if (!currentUser || currentUser.email !== debugInfo.expectedAdminEmail) { /* ... error handling ... */
+        if (!currentUser || currentUser.email !== debugInfo.expectedAdminEmail) {
              debugInfo.errorMessage = `Access Denied. User: ${debugInfo.serverUserEmail || 'unauthenticated'}`;
+             console.warn('API Route:', debugInfo.errorMessage);
              return { error: createError({ statusCode: 403, statusMessage: 'Forbidden' }).toJSON(), debug: debugInfo };
         }
         debugInfo.accessGranted = true;
@@ -82,8 +83,9 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
 
         debugInfo.step = 'Getting server Supabase client';
         const client = await serverSupabaseClient(event);
-        if (!client) { /* ... error handling ... */
+        if (!client) {
             debugInfo.errorMessage = 'Failed to initialize Supabase server client.';
+             console.error('API Route Error:', debugInfo.errorMessage);
              return { error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(), debug: debugInfo };
         }
 
@@ -121,8 +123,6 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
              debugInfo.step = 'Error: Failed fetching providers';
              debugInfo.errorMessage = `Failed to fetch API providers: ${providersResult.error.message}`;
              console.error('API Route Error:', debugInfo.errorMessage, providersResult.error);
-             // Kita bisa memilih untuk tetap lanjut tanpa providers atau mengembalikan error
-             // Untuk sekarang, kita kembalikan error agar jelas
              return {
                  error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(),
                  debug: debugInfo
