@@ -289,35 +289,39 @@ const closeEditModal = () => {
 };
 
 const saveUserChanges = async () => {
-    if (!userToEdit.value) return;
+    // Pastikan userToEdit tidak null sebelum memulai
+    if (!userToEdit.value || !userToEdit.value.email) {
+        editError.value = 'Data pengguna tidak valid untuk diedit.';
+        return;
+    }
+
     editLoading.value = true;
     editError.value = null;
+    // ✅ Simpan email sebelum melakukan operasi async atau menutup modal
+    const userEmailForAlert = userToEdit.value.email;
+    const userIdToUpdate = userToEdit.value.id;
+
     try {
-        const userIdToUpdate = userToEdit.value.id;
         const payload = {
-            full_name: editableFullName.value.trim() || null // Kirim null jika string kosong
-            // Tambahkan field lain dari 'profiles' jika ada di modal
+            full_name: editableFullName.value.trim() || null
         };
 
-        // Panggil API PATCH
         const apiResponse = await $fetch(`/api/admin/users/${userIdToUpdate}`, {
             method: 'PATCH',
             body: payload
         });
 
-         // Asumsi API mengembalikan { success: true, ... } jika berhasil
-         if (apiResponse && (apiResponse as any).success) {
-            closeEditModal(); // Tutup modal
-            await refresh(); // Refresh daftar pengguna
-            alert(`Profil pengguna ${userToEdit.value.email} berhasil diperbarui.`);
+        if (apiResponse && (apiResponse as any).success) {
+            closeEditModal(); // Sekarang aman untuk menutup modal
+            await refresh();
+            // ✅ Gunakan variabel yang disimpan untuk alert
+            alert(`Profil pengguna ${userEmailForAlert} berhasil diperbarui.`);
         } else {
-            // Tangani jika API mengembalikan struktur error
             const errorMessage = (apiResponse as any)?.error?.statusMessage || (apiResponse as any)?.message || 'Gagal menyimpan perubahan.';
             throw new Error(errorMessage);
         }
     } catch (err: any) {
         console.error("Error updating user:", err);
-        // Coba ambil pesan error dari berbagai kemungkinan lokasi
         editError.value = err.data?.message || err.data?.error?.statusMessage || err.statusMessage || err.message || 'Terjadi kesalahan saat menyimpan.';
     } finally {
         editLoading.value = false;
