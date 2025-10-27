@@ -3,10 +3,11 @@ import { serverSupabaseUser, serverSupabaseClient } from '#supabase/server'
 import { createError, defineEventHandler, H3Event } from 'h3'
 import { useRuntimeConfig } from '#imports'
 
-// Tipe data berdasarkan skema DB (Rancangan DB Cortex Deploy.pdf) 
+// --- Interface (ApiProvider, MarketplaceModel, DebugInfo, ApiErrorResponse tetap sama) ---
 interface ApiProvider {
     id: number;
     name: string;
+    // Tambahkan field lain jika perlu ditampilkan di frontend
 }
 
 interface MarketplaceModel {
@@ -16,15 +17,14 @@ interface MarketplaceModel {
     display_name: string;
     model_type: string;
     context_window: number | null;
-    provider_cost_per_million_input: string; // Tipe DECIMAL di DB sering dibaca sebagai string
+    provider_cost_per_million_input: string;
     provider_cost_per_million_output: string;
     selling_price_per_million_input: string;
     selling_price_per_million_output: string;
     is_available: boolean;
-    api_providers: ApiProvider | null; // Untuk menyimpan hasil join
+    api_providers: Pick<ApiProvider, 'id' | 'name'> | null; // Cukup ID dan Nama provider
 }
 
-// Tipe DebugInfo dan ApiErrorResponse bisa disalin dari users.get.ts atau dibuat ulang
 interface DebugInfo {
     invoked: boolean;
     expectedAdminEmail?: string | null;
@@ -34,8 +34,10 @@ interface DebugInfo {
     step?: string;
 }
 
+// ✅ Perbarui ApiResponse untuk menyertakan providers
 interface ApiResponse {
     models: MarketplaceModel[];
+    providers: ApiProvider[]; // <-- Tambahkan ini
     debug: DebugInfo;
 }
 
@@ -60,82 +62,85 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
     };
 
     try {
+        // --- Validasi Config & User (Sama seperti sebelumnya) ---
         debugInfo.step = 'Reading runtime config';
         const config = useRuntimeConfig(event);
         debugInfo.expectedAdminEmail = config.public.adminEmail || null;
+        if (!debugInfo.expectedAdminEmail) { /* ... error handling ... */
+             debugInfo.errorMessage = 'Server configuration error: Admin email missing.';
+             return { error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(), debug: debugInfo };
+        }
+        debugInfo.step = 'Validating current user';
+        const currentUser = await serverSupabaseUser(event);
+        debugInfo.serverUserEmail = currentUser?.email || null;
+        if (!currentUser || currentUser.email !== debugInfo.expectedAdminEmail) { /* ... error handling ... */
+             debugInfo.errorMessage = `Access Denied. User: ${debugInfo.serverUserEmail || 'unauthenticated'}`;
+             return { error: createError({ statusCode: 403, statusMessage: 'Forbidden' }).toJSON(), debug: debugInfo };
+        }
+        debugInfo.accessGranted = true;
+        // --- Akhir Validasi ---
 
-        // Cek admin email
-        if (!debugInfo.expectedAdminEmail) {
-            debugInfo.step = 'Error: Admin email missing';
-            debugInfo.errorMessage = 'Server configuration error: Admin email missing.';
-            console.error('API Route Error:', debugInfo.errorMessage);
+        debugInfo.step = 'Getting server Supabase client';
+        const client = await serverSupabaseClient(event);
+        if (!client) { /* ... error handling ... */
+            debugInfo.errorMessage = 'Failed to initialize Supabase server client.';
+             return { error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(), debug: debugInfo };
+        }
+
+        // ✅ Jalankan fetch models dan providers secara paralel
+        debugInfo.step = 'Fetching marketplace models and providers';
+        const [modelsResult, providersResult] = await Promise.all([
+            client
+                .from('marketplace_models')
+                .select(`
+                    *,
+                    api_providers ( id, name )
+                `)
+                .order('provider_id', { ascending: true })
+                .order('display_name', { ascending: true }),
+            client
+                .from('api_providers')
+                .select('id, name') // Ambil hanya ID dan nama
+                .eq('is_active', true) // Hanya provider aktif
+                .order('name', { ascending: true })
+        ]);
+
+        // Handle error fetch models
+        if (modelsResult.error) {
+            debugInfo.step = 'Error: Failed fetching models';
+            debugInfo.errorMessage = `Failed to fetch marketplace models: ${modelsResult.error.message}`;
+            console.error('API Route Error:', debugInfo.errorMessage, modelsResult.error);
             return {
                 error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(),
                 debug: debugInfo
             };
         }
 
-        debugInfo.step = 'Validating current user';
-        const currentUser = await serverSupabaseUser(event);
-        debugInfo.serverUserEmail = currentUser?.email || null;
-
-        // Validasi user admin
-        if (!currentUser || currentUser.email !== debugInfo.expectedAdminEmail) {
-            debugInfo.step = 'Error: Access denied';
-            debugInfo.errorMessage = `Access Denied. User: ${debugInfo.serverUserEmail || 'unauthenticated'}`;
-            console.warn('API Route:', debugInfo.errorMessage);
-            return {
-                error: createError({ statusCode: 403, statusMessage: 'Forbidden' }).toJSON(),
-                debug: debugInfo
-            };
-        }
-        debugInfo.accessGranted = true;
-
-        // Gunakan client server Supabase (yang menggunakan service_key secara internal)
-        debugInfo.step = 'Getting server Supabase client';
-        const client = await serverSupabaseClient(event);
-
-        if (!client) {
-             debugInfo.step = 'Error: Failed to get Supabase client';
-             debugInfo.errorMessage = 'Failed to initialize Supabase server client.';
-             console.error('API Route Error:', debugInfo.errorMessage);
+        // Handle error fetch providers
+        if (providersResult.error) {
+             debugInfo.step = 'Error: Failed fetching providers';
+             debugInfo.errorMessage = `Failed to fetch API providers: ${providersResult.error.message}`;
+             console.error('API Route Error:', debugInfo.errorMessage, providersResult.error);
+             // Kita bisa memilih untuk tetap lanjut tanpa providers atau mengembalikan error
+             // Untuk sekarang, kita kembalikan error agar jelas
              return {
                  error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(),
                  debug: debugInfo
              };
         }
 
-        debugInfo.step = 'Fetching marketplace models with provider name';
-        // Ambil data model dan join dengan nama provider
-        const { data: models, error: fetchError } = await client
-            .from('marketplace_models')
-            .select(`
-                *,
-                api_providers ( id, name )
-            `)
-            .order('provider_id', { ascending: true })
-            .order('display_name', { ascending: true });
 
-
-        if (fetchError) {
-            debugInfo.step = 'Error: Failed fetching models';
-            debugInfo.errorMessage = `Failed to fetch marketplace models: ${fetchError.message}`;
-            console.error('API Route Error:', debugInfo.errorMessage, fetchError);
-            return {
-                error: createError({ statusCode: 500, statusMessage: debugInfo.errorMessage }).toJSON(),
-                debug: debugInfo
-            };
-        }
-
-        debugInfo.step = `Completed: Successfully fetched ${models?.length || 0} models.`;
-        console.log(`API Route: Successfully fetched ${models?.length || 0} marketplace models.`);
+        debugInfo.step = `Completed: Fetched ${modelsResult.data?.length || 0} models and ${providersResult.data?.length || 0} providers.`;
+        console.log(`API Route: Successfully fetched ${modelsResult.data?.length || 0} models and ${providersResult.data?.length || 0} providers.`);
 
         return {
-            models: models || [],
+            models: modelsResult.data || [],
+            providers: providersResult.data || [], // <-- Sertakan providers di response
             debug: debugInfo
         };
 
     } catch (error: any) {
+        // --- Error Handling (Sama seperti sebelumnya) ---
         debugInfo.step = 'Error: Unhandled exception';
         debugInfo.errorMessage = error.message || 'Internal Server Error in API route.';
         console.error('API Route Unhandled Error:', error);

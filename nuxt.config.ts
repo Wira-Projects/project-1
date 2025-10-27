@@ -32,6 +32,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     // Kunci Service Role HANYA akan tersedia di sisi server
     supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY, // <-- Pastikan baris ini ada
+    openrouterProvisioningKey: process.env.OPENROUTER_PROVISIONING_KEY,
     
     public: {
       adminEmail: process.env.ADMIN_EMAIL || 'admin@example.com' // Default fallback jika tidak ada
