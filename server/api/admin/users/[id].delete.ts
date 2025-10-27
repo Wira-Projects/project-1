@@ -3,6 +3,7 @@ import { serverSupabaseUser } from '#supabase/server';
 import { createClient } from '@supabase/supabase-js';
 import { createError, defineEventHandler, H3Event } from 'h3';
 import { useRuntimeConfig } from '#imports';
+import { createClient } from '@supabase/supabase-js';
 
 // Interface sederhana untuk respons sukses
 interface SuccessResponse {

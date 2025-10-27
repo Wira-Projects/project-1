@@ -2,6 +2,7 @@
 import { serverSupabaseUser, serverSupabaseClient } from '#supabase/server';
 import { createError, defineEventHandler, H3Event, readBody } from 'h3';
 import { useRuntimeConfig } from '#imports';
+import { createClient } from '@supabase/supabase-js';
 
 // Interface untuk data yang diterima di body
 interface UpdateProfilePayload {

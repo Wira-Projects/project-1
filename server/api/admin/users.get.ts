@@ -3,6 +3,7 @@ import { serverSupabaseUser } from '#supabase/server'; // Tetap gunakan ini untu
 import { createClient } from '@supabase/supabase-js'; // <-- Import createClient
 import { createError, defineEventHandler, H3Event } from 'h3';
 import { useRuntimeConfig } from '#imports';
+import { createClient } from '@supabase/supabase-js';
 
 // --- Tipe Interface (DetailedUser, DebugInfo, ApiResponse, ApiErrorResponse) tetap sama ---
 interface DetailedUser {
