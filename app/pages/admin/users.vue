@@ -152,9 +152,32 @@ interface DetailedUser {
         } | null;
     } | null;
 }
-interface DebugInfo { /* ... Definisi DebugInfo ... */ }
-interface ApiResponse { users: DetailedUser[]; debug: DebugInfo; }
-interface ApiErrorResponse { error: { statusCode: number; statusMessage: string; data?: any }; debug: DebugInfo; }
+
+interface DebugInfo {
+    invoked: boolean;
+    expectedAdminEmail?: string | null;
+    serviceKeyPresent?: boolean;
+    serverUserEmail?: string | null;
+    accessGranted?: boolean;
+    errorMessage?: string;
+    step?: string;
+    // Tambahkan properti debug lain jika perlu dari API
+}
+
+// Definisikan tipe untuk respons sukses dan error
+interface ApiResponse {
+    users: DetailedUser[];
+    debug: DebugInfo;
+}
+
+interface ApiErrorResponse {
+    error: {
+      statusCode: number;
+      statusMessage: string;
+      data?: any;
+    };
+    debug: DebugInfo;
+}
 
 // Meta Halaman & Middleware
 definePageMeta({ layout: 'admin', middleware: 'admin-auth' });
@@ -178,20 +201,23 @@ const editError = ref<string | null>(null);
 // Data Fetching
 const { data: response, pending, error: fetchError, refresh } = await useAsyncData<ApiResponse | ApiErrorResponse>(
   'adminUsers',
-  () => $fetch<ApiResponse | ApiErrorResponse>('/api/admin/users'),
+  () => $fetch<ApiResponse | ApiErrorResponse>('/api/admin/users'), // Tipe fetch ditentukan di sini
 );
 
 // Computed Properties untuk Data & Error
 const usersData = computed(() => (response.value && !('error' in response.value) ? (response.value as ApiResponse).users : []));
+
 const errorResponse = computed(() => {
     if (fetchError.value) {
         const statusCode = fetchError.value.statusCode || 500;
         const statusMessage = fetchError.value.statusMessage || fetchError.value.message || 'Error fetching data';
-        const debugFallback = { errorMessage: statusMessage, step: 'useAsyncData fetch failed' };
-        return { error: { statusCode, statusMessage, data: fetchError.value.data }, debug: (fetchError.value.data as any)?.debug || debugFallback } as ApiErrorResponse;
+        // Cobalah untuk mendapatkan debug info dari data error jika ada
+        const debugInfo = (fetchError.value.data as any)?.debug || { errorMessage: statusMessage, step: 'useAsyncData fetch failed' };
+        return { error: { statusCode, statusMessage, data: fetchError.value.data }, debug: debugInfo } as ApiErrorResponse;
     }
     return response.value && 'error' in response.value ? response.value as ApiErrorResponse : null;
 });
+
 const debugData = computed(() => response.value && !('error' in response.value) ? (response.value as ApiResponse).debug : errorResponse.value?.debug || null);
 
 // Computed Property untuk Filtering
@@ -214,28 +240,36 @@ watch(userToEdit, (newUser) => {
 
 // Methods untuk Aksi Hapus
 const confirmSuspend = (user: DetailedUser) => { userToSuspend.value = user; suspendError.value = null; };
+
 const suspendUser = async () => {
    if (!userToSuspend.value) return;
     suspending.value = true;
     suspendError.value = null;
     try {
         const userIdToDelete = userToSuspend.value.id;
-        const response = await $fetch(`/api/admin/users/${userIdToDelete}`, { method: 'DELETE' });
-        // @ts-ignore - Asumsi response sukses punya property success
-        if (response && response.success) {
+        // Panggil API route DELETE
+        const apiResponse = await $fetch(`/api/admin/users/${userIdToDelete}`, {
+            method: 'DELETE',
+        });
+
+        // Asumsi API mengembalikan { success: true, ... } jika berhasil
+        if (apiResponse && (apiResponse as any).success) {
             const deletedEmail = userToSuspend.value.email;
-            userToSuspend.value = null;
-            await refresh();
+            userToSuspend.value = null; // Tutup modal
+            await refresh(); // Refresh daftar pengguna di halaman
             alert(`Pengguna ${deletedEmail || userIdToDelete} berhasil dihapus.`);
         } else {
-             // @ts-ignore
-            throw new Error(response?.error?.statusMessage || response?.message || 'Gagal menghapus pengguna.');
+             // Tangani jika API mengembalikan struktur error yang diharapkan atau pesan lain
+             const errorMessage = (apiResponse as any)?.error?.statusMessage || (apiResponse as any)?.message || 'Gagal menghapus pengguna dari server.';
+             throw new Error(errorMessage);
         }
+
     } catch (err: any) {
         console.error("Error deleting user:", err);
-        const message = err.data?.message || err.statusMessage || err.message || 'Terjadi kesalahan.';
+        // Coba ambil pesan error dari berbagai kemungkinan lokasi
+        const message = err.data?.message || err.data?.error?.statusMessage || err.statusMessage || err.message || 'Terjadi kesalahan saat menghapus pengguna.';
         suspendError.value = message;
-        // Jangan alert di sini karena error sudah ditampilkan di modal
+        // Error sudah ditampilkan di modal, tidak perlu alert lagi
     } finally {
         suspending.value = false;
     }
@@ -243,15 +277,17 @@ const suspendUser = async () => {
 
 // Methods untuk Aksi Edit
 const editUser = (user: DetailedUser) => {
-    userToEdit.value = JSON.parse(JSON.stringify(user)); // Salin data user agar tidak terikat langsung
-    editError.value = null;
+    userToEdit.value = JSON.parse(JSON.stringify(user)); // Buat salinan deep clone
+    editError.value = null; // Reset error sebelumnya
     showEditModal.value = true;
 };
+
 const closeEditModal = () => {
     showEditModal.value = false;
-    userToEdit.value = null;
-    editableFullName.value = ''; // Reset form
+    userToEdit.value = null; // Kosongkan user yang diedit
+    editableFullName.value = ''; // Reset form input
 };
+
 const saveUserChanges = async () => {
     if (!userToEdit.value) return;
     editLoading.value = true;
@@ -259,28 +295,30 @@ const saveUserChanges = async () => {
     try {
         const userIdToUpdate = userToEdit.value.id;
         const payload = {
-            full_name: editableFullName.value.trim() || null // Kirim null jika kosong
-            // Tambahkan field lain dari 'profiles' jika ada
+            full_name: editableFullName.value.trim() || null // Kirim null jika string kosong
+            // Tambahkan field lain dari 'profiles' jika ada di modal
         };
 
-        // Panggil API PATCH baru yang akan kita buat
-        const response = await $fetch(`/api/admin/users/${userIdToUpdate}`, {
+        // Panggil API PATCH
+        const apiResponse = await $fetch(`/api/admin/users/${userIdToUpdate}`, {
             method: 'PATCH',
             body: payload
         });
 
-         // @ts-ignore
-         if (response && response.success) {
-            closeEditModal();
+         // Asumsi API mengembalikan { success: true, ... } jika berhasil
+         if (apiResponse && (apiResponse as any).success) {
+            closeEditModal(); // Tutup modal
             await refresh(); // Refresh daftar pengguna
             alert(`Profil pengguna ${userToEdit.value.email} berhasil diperbarui.`);
         } else {
-             // @ts-ignore
-            throw new Error(response?.error?.statusMessage || response?.message || 'Gagal menyimpan perubahan.');
+            // Tangani jika API mengembalikan struktur error
+            const errorMessage = (apiResponse as any)?.error?.statusMessage || (apiResponse as any)?.message || 'Gagal menyimpan perubahan.';
+            throw new Error(errorMessage);
         }
     } catch (err: any) {
         console.error("Error updating user:", err);
-        editError.value = err.data?.message || err.statusMessage || err.message || 'Terjadi kesalahan saat menyimpan.';
+        // Coba ambil pesan error dari berbagai kemungkinan lokasi
+        editError.value = err.data?.message || err.data?.error?.statusMessage || err.statusMessage || err.message || 'Terjadi kesalahan saat menyimpan.';
     } finally {
         editLoading.value = false;
     }
@@ -290,8 +328,9 @@ const saveUserChanges = async () => {
 const formatDate = (dateString?: string): string => {
     if (!dateString) return '-';
     try { return new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
-    catch (e) { console.error("Invalid date:", dateString, e); return '-'; }
+    catch (e) { console.error("Invalid date format:", dateString, e); return '-'; }
 };
+
 const getStatusClasses = (confirmedAt?: string | null): string => {
     return confirmedAt ? 'bg-green-500/30 text-green-400' : 'bg-yellow-500/30 text-yellow-400';
 };
@@ -311,23 +350,42 @@ const getStatusClasses = (confirmedAt?: string | null): string => {
 /* Style untuk debug info */
 details > summary { list-style: none; cursor: pointer;}
 details > summary::-webkit-details-marker { display: none; }
-pre { font-family: monospace; font-size: 0.75rem; line-height: 1.25; }
+pre { font-family: monospace; font-size: 0.75rem; line-height: 1.25; white-space: pre-wrap; word-break: break-all;}
 
 /* Style tambahan untuk input form di modal (ambil dari main.css jika perlu) */
 .form-input {
-    background-color: rgba(30, 41, 59, 0.7);
-    border: 1px solid rgba(55, 65, 81, 0.8);
-    color: #e2e8f0;
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
+    background-color: rgba(30, 41, 59, 0.7); /* bg-slate-800 */
+    border: 1px solid rgba(55, 65, 81, 0.8); /* border-slate-700 */
+    color: #e2e8f0; /* text-slate-200 */
+    border-radius: 0.5rem; /* rounded-lg */
+    padding: 0.75rem 1rem; /* py-3 px-4 */
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
+.form-input::placeholder { color: #64748b; /* text-slate-500 */ }
 .form-input:focus {
     outline: none;
     border-color: #f59e0b; /* amber-500 */
     box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
 }
-.form-input:disabled {
+.form-input:disabled, .form-input[disabled] { /* Style untuk input disabled */
     opacity: 0.6;
+    cursor: not-allowed;
+    background-color: #475569; /* slate-600 */
+}
+
+/* Style tombol CTA (konsisten) */
+.cta-button {
+    background: linear-gradient(to right, #22d3ee, #818cf8);
+    transition: all 0.3s ease;
+}
+.cta-button:hover {
+    transform: translateY(-1px); /* Sedikit lebih halus */
+    box-shadow: 0 5px 10px -2px rgba(34, 211, 238, 0.2), 0 2px 4px -1px rgba(167, 139, 250, 0.1);
+}
+.cta-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
 }
 </style>
