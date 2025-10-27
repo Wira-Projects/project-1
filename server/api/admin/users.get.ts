@@ -1,10 +1,10 @@
 // server/api/admin/users.get.ts
 import { serverSupabaseUser } from '#supabase/server';
-import { createClient } from '@supabase/supabase-js'; // <-- Pastikan ini diimpor
+import { createClient } from '@supabase/supabase-js';
 import { createError, defineEventHandler, H3Event } from 'h3';
 import { useRuntimeConfig } from '#imports';
 
-// --- Tipe Interface (DetailedUser, DebugInfo, ApiResponse, ApiErrorResponse) ---
+// --- Tipe Interface (Disederhanakan) ---
 interface DetailedUser {
     id: string; // Dari auth.users
     email?: string; // Dari auth.users
@@ -12,12 +12,8 @@ interface DetailedUser {
     email_confirmed_at?: string | null; // Dari auth.users
     profile: { // Dari public.profiles
         full_name?: string | null; // Nama dari profiles
-        // Tambahkan field lain dari profiles jika perlu
-        current_organization_id?: number | null;
-        organization?: { // Hasil join tambahan jika perlu
-            name?: string;
-        } | null;
-    } | null; // Profile bisa jadi null jika belum dibuat
+        // Hapus current_organization_id dan organization
+    } | null; // Profile bisa jadi null
 }
 interface DebugInfo {
     invoked: boolean;
@@ -27,7 +23,7 @@ interface DebugInfo {
     accessGranted?: boolean;
     errorMessage?: string;
     step?: string;
-    receivedCookieHeader?: string | null; // Opsional: untuk debugging cookie
+    receivedCookieHeader?: string | null;
 }
 interface ApiResponse {
     users: DetailedUser[];
@@ -59,7 +55,7 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         debugInfo.step = 'Reading runtime config';
         const config = useRuntimeConfig(event);
         debugInfo.expectedAdminEmail = config.public.adminEmail || null;
-        const serviceKey = config.supabaseServiceKey; // Kunci service role
+        const serviceKey = config.supabaseServiceKey;
         debugInfo.serviceKeyPresent = !!serviceKey;
         const supabaseUrl = config.public.supabase.url;
 
@@ -87,7 +83,7 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         }
         debugInfo.accessGranted = true;
 
-        // Buat Supabase client dengan service key (untuk bypass RLS)
+        // Buat Supabase client dengan service key
         debugInfo.step = 'Creating Supabase admin client';
         const adminClient = createClient(supabaseUrl, serviceKey, {
             auth: { autoRefreshToken: false, persistSession: false }
@@ -98,79 +94,58 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         const { data: authUsersData, error: listError } = await adminClient.auth.admin.listUsers();
 
         if (listError) {
-            debugInfo.step = 'Error: Failed fetching users list';
-            debugInfo.errorMessage = `Failed to list users: ${listError.message}`;
-            console.error('API Route Error:', debugInfo.errorMessage, listError);
-            return { error: createError({ statusCode: listError.status || 500, statusMessage: debugInfo.errorMessage }).toJSON(), debug: debugInfo };
+             debugInfo.step = 'Error: Failed fetching users list';
+             debugInfo.errorMessage = `Failed to list users: ${listError.message}`;
+             console.error('API Route Error:', debugInfo.errorMessage, listError);
+             return { error: createError({ statusCode: listError.status || 500, statusMessage: debugInfo.errorMessage }).toJSON(), debug: debugInfo };
         }
         if (!authUsersData || !authUsersData.users || authUsersData.users.length === 0) {
-            debugInfo.step = 'Completed: No users found in auth.users';
-            return { users: [], debug: debugInfo };
+             debugInfo.step = 'Completed: No users found in auth.users';
+             return { users: [], debug: debugInfo };
         }
 
         const authUsers = authUsersData.users;
         const userIds = authUsers.map(u => u.id);
 
-        // 2. Ambil semua profil terkait dari public.profiles
+        // 2. Ambil profil terkait dari public.profiles (hanya full_name)
         debugInfo.step = `Fetching profiles for ${userIds.length} users from public.profiles`;
         const { data: profilesData, error: profileError } = await adminClient
             .from('profiles')
-            .select('user_id, full_name, current_organization_id') // Ambil kolom yang dibutuhkan
+            .select('user_id, full_name') // <-- Hanya ambil user_id dan full_name
             .in('user_id', userIds);
 
         if (profileError) {
-            // Log warning tapi jangan gagalkan request jika hanya profil yang gagal
-            debugInfo.errorMessage = `Warning: Error fetching profiles: ${profileError.message}`;
-            console.warn('API Route Warning:', debugInfo.errorMessage, profileError);
-            // Tetap lanjutkan dengan profilesData = []
+             // Log warning, tapi tidak fatal
+             debugInfo.errorMessage = `Warning: Error fetching profiles: ${profileError.message}`;
+             console.warn('API Route Warning:', debugInfo.errorMessage, profileError);
         }
-        // Buat Map untuk lookup profil yang efisien: Map<user_id, profile_data>
         const profilesMap = new Map((profilesData || []).map(p => [p.user_id, p]));
 
-        // (Opsional) Ambil data organisasi jika diperlukan (seperti kode sebelumnya)
-        debugInfo.step = 'Fetching organizations (if needed)';
-        const organizationIds = (profilesData || [])
-            .map(p => p.current_organization_id)
-            .filter((id): id is number => id != null);
-        let organizationsMap: Map<number, { name?: string }> = new Map();
-        if (organizationIds.length > 0) {
-            const { data: orgsData, error: orgError } = await adminClient
-                .from('organizations')
-                .select('id, name')
-                .in('id', organizationIds);
-            if (orgError) {
-                console.warn("API Route Warning: Error fetching organizations:", orgError.message);
-                debugInfo.errorMessage = (debugInfo.errorMessage ? debugInfo.errorMessage + '; ' : '') + `Error fetching organizations: ${orgError.message}`;
-            } else if (orgsData) {
-                organizationsMap = new Map(orgsData.map(org => [org.id, { name: org.name }]));
-            }
-        }
+        // HAPUS BAGIAN FETCH ORGANISASI KARENA TIDAK DIPERLUKAN/TIDAK ADA KOLOMNYA
 
-        // 3. Gabungkan data auth.users dengan public.profiles (dan organization jika ada)
-        debugInfo.step = 'Combining user data with profiles and organizations';
+        // 3. Gabungkan data auth.users dengan public.profiles
+        debugInfo.step = 'Combining user data with profiles';
         const detailedUsers: DetailedUser[] = authUsers.map(authUser => {
-            const profile = profilesMap.get(authUser.id) || null; // Cari profil berdasarkan user_id
-            const organization = profile?.current_organization_id ? organizationsMap.get(profile.current_organization_id) || null : null;
+            const profile = profilesMap.get(authUser.id) || null;
 
             return {
                 id: authUser.id,
                 email: authUser.email,
                 created_at: authUser.created_at,
                 email_confirmed_at: authUser.email_confirmed_at,
-                profile: profile ? { // Masukkan data profil jika ada
-                    full_name: profile.full_name, // Ini nama dari tabel profiles
-                    current_organization_id: profile.current_organization_id,
-                    organization: organization
-                } : null, // Jika tidak ada profil, set ke null
+                profile: profile ? {
+                    full_name: profile.full_name,
+                    // Hapus referensi ke organization
+                } : null,
             };
         });
 
         debugInfo.step = `Completed: Successfully processed ${detailedUsers.length} users.`;
         // Hapus pesan error jika hanya ada warning
         if (debugInfo.errorMessage?.startsWith('Warning')) {
-            // Keep the warning, but don't treat it as a fatal error unless step indicates otherwise
+             // Keep the warning
         } else if (!debugInfo.step.startsWith('Error:')) {
-             debugInfo.errorMessage = undefined; // Clear error if successful
+             debugInfo.errorMessage = undefined;
         }
 
         return { users: detailedUsers, debug: debugInfo };
@@ -179,7 +154,6 @@ export default defineEventHandler(async (event: H3Event): Promise<ApiResponse | 
         debugInfo.step = 'Error: Unhandled exception in API route';
         debugInfo.errorMessage = error.message || 'Internal Server Error.';
         console.error('API Route Unhandled Error:', error);
-        // Pastikan error yang dilempar adalah H3Error JSON
         const h3Error = createError({ statusCode: error.statusCode || 500, statusMessage: debugInfo.errorMessage, data: error.data });
         return { error: h3Error.toJSON(), debug: debugInfo };
     }
